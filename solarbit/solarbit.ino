@@ -20,50 +20,62 @@ typedef union {
 
 block_t block;
 
-uint8_t target[HASH_SIZE];
-uint8_t current_hash[HASH_SIZE];
-uint8_t best_hash[HASH_SIZE] = {
+
+typedef struct {
+	uint8_t target[HASH_SIZE];
+	uint8_t current_hash[HASH_SIZE];
+	uint8_t best_hash[HASH_SIZE];
+	unsigned long start_time;
+	unsigned long cumulative_time;
+	uint32_t start_nonce;
+	boolean valid;
+	boolean mined;
+	boolean paused;
+} status_t;
+
+status_t status;
+
+uint8_t const max_hash[] = {
 	0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+	   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-boolean valid = false;
-boolean mined = false;
-boolean paused = true;
-
-unsigned long start_time;
-unsigned long cumulative_time;
-uint32_t start_nonce;
+// M02000000da388d7496041fc6715f6fb06d93c49145afb6c25d872ebd0500000000000000425f3c31f49ce7dece098cc6236fc0c9fb099d4e73609d48d7ff42313468aa081c48a2524212061929e06286
+uint8_t test_block[] = {
+	1,0,0,0,234,141,253,92,14,35,8,200,179,166,115,97,93,250,242,143,169,3,156,
+	88,73,250,88,75,5,15,0,0,0,0,0,0,34,89,134,254,85,127,253,145,191,7,250,55,
+	82,184,161,249,5,88,122,137,30,126,220,11,228,65,119,50,21,45,140,229,12,234,
+	249,77,133,33,19,26,112,140,77,210
+};
 
 
 void setup() {
 	initialize_wireless_network();
 	connect_to_server();
+	status.paused = true;
 }
 
 
 void loop() {
 	do_server_command();
-	if (valid && !paused && !mined) {
-		do_hash(&block, current_hash);
-		int compare = memcmp(current_hash, target, HASH_SIZE);
+	if (status.valid && !status.paused && !status.mined) {
+		do_hash(&block, status.current_hash);
+		int compare = memcmp(status.current_hash, status.target, HASH_SIZE);
 		if (compare <= 0) {
-			mined = true;
-			paused = true;
-			cumulative_time += millis() - start_time;
+			status.mined = true;
+			status.paused = true;
+			status.cumulative_time += millis() - status.start_time;
 			for (int i = 0; i < HASH_SIZE; i++) {
-				best_hash[i] = current_hash[i];
+				status.best_hash[i] = status.current_hash[i];
 			}
-			print_result();
+			print_status();
 		} else {
-			int compare2 = memcmp(current_hash, best_hash, HASH_SIZE);
+			int compare2 = memcmp(status.current_hash, status.best_hash, HASH_SIZE);
 			if (compare2 <= 0) {
 				for (int i = 0; i < HASH_SIZE; i++) {
-					best_hash[i] = current_hash[i];
+					status.best_hash[i] = status.current_hash[i];
 				}
-				print_hex(best_hash, HASH_SIZE);
-				Serial.print(":");
-				Serial.println(block.header.nonce);
+				print_update();
 			}
 			block.header.nonce += 1;
 		}
@@ -71,8 +83,28 @@ void loop() {
 }
 
 
-void set_target(block_t *block) {
-	uint32_t bits = block->header.bits;
+void load_block(uint8_t *bytes) {
+	status.valid = false;
+	for (int i = 0; i < BLOCK_HEADER_SIZE; i++) {
+		block.packet[i] = bytes[i];
+	}
+	if (block.header.version > 0) {
+		status.valid = true;
+	}
+	status.valid = set_target(block.header.bits, status.target);
+	for (int i = 0; i < HASH_SIZE; i++) {
+		status.current_hash[i] = max_hash[i];
+		status.best_hash[i] = max_hash[i];
+	}
+	status.start_time = 0;
+	status.cumulative_time = 0;
+	status.start_nonce = block.header.nonce;
+	status.mined = false;
+	status.paused = true;
+}
+
+
+boolean set_target(uint32_t bits, uint8_t *target) {
 	for (int i = 0; i < HASH_SIZE; i++) {
 		target[i] = 0;
 	}
@@ -82,22 +114,23 @@ void set_target(block_t *block) {
 		target[32 - exponent] = mantissa >> 16 & 0xFF;
 		target[33 - exponent] = mantissa >> 8 & 0xFF;
 		target[34 - exponent] = mantissa & 0xFF;
+		return true;
 	} else {
-		// error!
+		return false;
 	}
 }
 
 
 double get_hashrate() {
-	double hashes = (block.header.nonce - start_nonce) / 1000.0;
-	if (paused) {
-		if (cumulative_time > 0) {
-			return hashes / (cumulative_time / 1000.0);
+	double hashes = (block.header.nonce - status.start_nonce) / 1000.0;
+	if (status.paused) {
+		if (status.cumulative_time > 0) {
+			return hashes / (status.cumulative_time / 1000.0);
 		} else {
 			return 0.0;
 		}
 	} else {
-		return hashes / ((millis() - start_time + cumulative_time) / 1000.0);
+		return hashes / ((millis() - status.start_time + status.cumulative_time) / 1000.0);
 	}
 }
 
@@ -136,111 +169,141 @@ void do_server_command() {
       switch (ch) {
         case 'm':
         case 'M':
-			if (valid) {
-				Serial.println("\nMINING BLOCK...");
-				print_hex(block.packet, BLOCK_HEADER_SIZE);
-				Serial.println();
-				Serial.print("Starting Nonce: ");
-				Serial.println(block.header.nonce);
-				print_hex(target, HASH_SIZE);
-				Serial.println(":target");
-				start_time = millis();
-				cumulative_time = 0;
-				start_nonce = block.header.nonce;
-				paused = false;
+			char buf[161];
+			int num;
+			num = Serial.readBytes(buf, 160);
+			if (num == 160) {
+				uint8_t bytes[80];
+				from_hex(buf, 160, bytes);
+				load_block(bytes);
+				if (status.valid) {
+					Serial.println("\nMINING BLOCK...");
+					print_hex(status.target, HASH_SIZE);
+					Serial.println(":target");
+					status.paused = false;
+				} else {
+					Serial.println("INVALID BLOCK");
+				}
+				print_block();
 			} else {
-				Serial.println("No block loaded\nSend 'T' to load a test block");
+				Serial.print("ERROR: ");
+				Serial.println(buf);
 			}
 			break;
         case 's':
         case 'S':
-        	Serial.print("\nSTATUS: ");
-			if (mined) {
-				Serial.println("MINED");
-				print_status(cumulative_time);
-			} else {
-				if (!paused) {
-					Serial.println("MINING");
-					print_status(millis() - start_time + cumulative_time);
-				} else if (block.header.version > 0){
-					Serial.println("PAUSED");
-					print_status(cumulative_time);
-				} else {
-					Serial.println("WAITING");
-				}
-			}
+			print_status();
     		break;
 		case 'p':
 		case 'P':
-			if (valid) {
-				paused = !paused;
-				if (paused) {
-					cumulative_time += millis() - start_time;
-					Serial.println("\nPAUSE");
-				} else if (mined) {
-					Serial.println("\nALREADY COMPLETED");
+			if (status.valid && !status.mined) {
+				status.paused = !status.paused;
+				if (status.paused) {
+					status.cumulative_time += millis() - status.start_time;
+					Serial.println("\nPAUSED");
 				} else {
-					Serial.println("\nRESUME");
-					start_time = millis();
+					Serial.println("\nRESUMING");
+					status.start_time = millis();
 				}
 			} else {
-				Serial.println("No block loaded\nSend 'T' to load a test block");
+				Serial.println("WAITING");
 			}
 			break;
 		case 't':
   		case 'T':
-			load_test_block();
-			if (block.header.version > 0) {
-				valid = true;
-			}
-			paused = true;
-			mined = false;
-			Serial.println("\nTest Block Loaded, send 'M' to start mining!");
+			load_block(test_block);
+			Serial.println("TEST BLOCK LOADED...");
+			print_block();
+			print_hex(status.target, HASH_SIZE);
+			Serial.println(":target");
+			status.paused = false;
 			break;
         default:
-			Serial.print("COMMAND '");
+			Serial.print("UNKNOWN COMMAND '");
         	Serial.print(ch);
-        	Serial.println("' UNKNOWN");
+        	Serial.println("'");
         	break;
       };
     }
 }
 
 
-boolean notify_server(uint8_t *hash) {
+boolean notify_server(block_t *block) {
 	return false;
 }
 
 
-void print_status(unsigned long time) {
-	print_hex(target, HASH_SIZE);
-	Serial.println(":target");
-	print_hex(best_hash, HASH_SIZE);
-	Serial.println(":best");
-	print_hex(current_hash, HASH_SIZE);
+void print_block() {
+	Serial.print("version:");
+	Serial.println(block.header.version);
+	Serial.print("previous:");
+	print_hex(block.header.previous_block, HASH_SIZE);
+	Serial.print("\nmerkle root:");
+	print_hex(block.header.merkle_root, HASH_SIZE);
+	Serial.print("\ntimestamp:");
+	Serial.println(block.header.time);
+	Serial.print("bits:");
+	Serial.println(block.header.bits);
+	Serial.print("starting nonce:");
+	Serial.println(block.header.nonce);
+	Serial.println();
+}
+
+
+void print_update() {
+	print_hex(status.best_hash, HASH_SIZE);
 	Serial.print(":");
 	Serial.println(block.header.nonce);
-	Serial.print(millis() - start_time + cumulative_time);
-	Serial.println(":ms");
-	Serial.print(get_hashrate());
-	Serial.println(":KH/s");
 }
 
 
-void print_result() {
-	Serial.println("\nBLOCK MINED!");
-	print_hex(target, HASH_SIZE);
+void print_status() {
+	Serial.print("\nSTATUS: ");
+	if (status.mined) {
+		Serial.println("MINED");
+	} else if (!status.paused) {
+		Serial.println("MINING");
+	} else if (status.valid) {
+		Serial.println("PAUSED");
+	} else {
+		Serial.println("WAITING");
+	}
+	unsigned long time = status.cumulative_time;
+	if (!status.paused && !status.mined) {
+		time += millis() - status.start_time;
+	}
+	print_hex(status.target, HASH_SIZE);
 	Serial.println(":target");
-	print_hex(current_hash, HASH_SIZE);
-	Serial.println(":current");
-	Serial.print(block.header.nonce);
-	Serial.println(":nonce");
-	Serial.print(cumulative_time);
+	print_hex(status.best_hash, HASH_SIZE);
+	Serial.println(":best");
+	print_hex(status.current_hash, HASH_SIZE);
+	Serial.print(":");
+	Serial.println(block.header.nonce);
+	Serial.print(time);
 	Serial.println(":ms");
 	Serial.print(get_hashrate());
 	Serial.println(":KH/s");
 }
 
+
+void from_hex(char *buf, int size, uint8_t *result) {
+	for (int i = 0, j = 0; i < size; i += 2, j++) {
+		uint8_t x, y;
+		x = hex_to_int(buf[i]);
+		y = hex_to_int(buf[i + 1]);
+		result[j] = (x << 4) | y;
+	}
+}
+
+uint8_t hex_to_int(char c) {
+	char const *map = "0123456789abcdef";
+	for (int i = 0; i < 16; i++) {
+		if (c == map[i]) {
+			return i;
+		}
+	}
+	return 0;
+}
 
 void print_hex(uint8_t* bytes, unsigned int count) {
 	char result[count * 2 + 1];
@@ -249,19 +312,5 @@ void print_hex(uint8_t* bytes, unsigned int count) {
 		result[j + 1] = "0123456789abcdef"[bytes[i] & 15];
 	}
 	result[count * 2] = 0;
-
 	Serial.print(result);
-}
-
-void load_test_block() {
-	uint8_t bytes[] = {
-		1,0,0,0,234,141,253,92,14,35,8,200,179,166,115,97,93,250,242,143,169,3,156,
-		88,73,250,88,75,5,15,0,0,0,0,0,0,34,89,134,254,85,127,253,145,191,7,250,55,
-		82,184,161,249,5,88,122,137,30,126,220,11,228,65,119,50,21,45,140,229,12,234,
-		249,77,133,33,19,26,64,113,62,210
-	};
-	for (int i = 0; i < BLOCK_HEADER_SIZE; i++) {
-		block.packet[i] = bytes[i];
-	}
-	set_target(&block);
 }
