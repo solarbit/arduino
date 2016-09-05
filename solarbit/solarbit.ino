@@ -187,7 +187,8 @@ void do_server_command() {
 				print_block();
 			} else {
 				Serial.print("ERROR: ");
-				Serial.println(buf);
+				Serial.print(num);
+				Serial.println(" bytes received\n");
 			}
 			break;
         case 's':
@@ -200,9 +201,9 @@ void do_server_command() {
 				status.paused = !status.paused;
 				if (status.paused) {
 					status.cumulative_time += millis() - status.start_time;
-					Serial.println("\nPAUSED");
+					Serial.println("PAUSED");
 				} else {
-					Serial.println("\nRESUMING");
+					Serial.println("RESUMING");
 					status.start_time = millis();
 				}
 			} else {
@@ -282,7 +283,7 @@ void print_status() {
 	Serial.print(time);
 	Serial.println(":ms");
 	Serial.print(get_hashrate());
-	Serial.println(":KH/s");
+	Serial.println(":KH/s\n");
 }
 
 
