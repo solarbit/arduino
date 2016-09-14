@@ -1,4 +1,6 @@
 .DS_Store
+eeprom_check
 morse
+WiFiCheck
 /libraries/*
 !/libraries/Crypto
