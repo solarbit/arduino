@@ -33,8 +33,8 @@ typedef union {
 typedef struct {
 	uint8_t magic[4];
 	uint8_t version[4];
-	uint32_t number;
-	uint8_t command[4];
+	uint32_t nonce;
+	uint8_t type[4];
 	uint32_t size;
 } message_header_t;
 

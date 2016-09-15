@@ -7,6 +7,8 @@
 
 enum MessageTypes {
 	HELO = 0,
+	MACK,
+	PACK,
 	STAT,
 	INFO,
 	WAIT,
@@ -34,6 +36,7 @@ block_t block;
 
 WiFiUDP udp;
 
+uint8_t response[MAX_UDP_PAYLOAD];
 
 void setup() {
 	Serial.begin(9600);
@@ -41,11 +44,10 @@ void setup() {
 	boolean success;
 	success = load_configuration();
 	if (success) {
-		config.net.status = WL_IDLE_STATUS;
 		success = connect_to_wifi();
 	}
 	if (success) {
-		Serial.print("  Pool Server");
+		Serial.print("Pool Server");
 		success = connect_to_pool();
 	}
 	if (success) {
@@ -61,33 +63,36 @@ void setup() {
 void loop() {
 	if (config.net.status == WL_CONNECTED) {
 		do_server_command();
-		if (status.valid && !status.paused && !status.mined) {
-			do_hash(&block, status.current_hash);
-			int compare = memcmp(status.current_hash, status.target, HASH_SIZE);
-			if (compare <= 0) {
-				status.mined = true;
-				status.paused = true;
-				status.cumulative_time += millis() - status.start_time;
-				for (int i = 0; i < HASH_SIZE; i++) {
-					status.best_hash[i] = status.current_hash[i];
-				}
-				print_status();
-			} else {
-				int compare2 = memcmp(status.current_hash, status.best_hash, HASH_SIZE);
-				if (compare2 <= 0) {
-					for (int i = 0; i < HASH_SIZE; i++) {
-						status.best_hash[i] = status.current_hash[i];
-					}
-					print_update();
-				}
-				block.header.nonce += 1;
-			}
-		}
+		mine();
 	} else {
 		delay(10000);
 	}
 }
 
+void mine() {
+	if (status.valid && !status.paused && !status.mined) {
+		do_hash(&block, status.current_hash);
+		int compare = memcmp(status.current_hash, status.target, HASH_SIZE);
+		if (compare <= 0) {
+			status.mined = true;
+			status.paused = true;
+			status.cumulative_time += millis() - status.start_time;
+			for (int i = 0; i < HASH_SIZE; i++) {
+				status.best_hash[i] = status.current_hash[i];
+			}
+			print_status();
+		} else {
+			int compare2 = memcmp(status.current_hash, status.best_hash, HASH_SIZE);
+			if (compare2 <= 0) {
+				for (int i = 0; i < HASH_SIZE; i++) {
+					status.best_hash[i] = status.current_hash[i];
+				}
+				print_update();
+			}
+			block.header.nonce += 1;
+		}
+	}
+}
 
 boolean load_configuration() {
 	for (unsigned int i = 0; i < sizeof(config_t); i++) {
@@ -98,6 +103,7 @@ boolean load_configuration() {
 
 
 boolean connect_to_wifi() {
+	config.net.status = WL_IDLE_STATUS;
 	int tries = 3;
 	while (config.net.status != WL_CONNECTED && tries > 0) {
 		config.net.status = WiFi.begin((char *)config.net.ssid, (char *)config.net.password);
@@ -106,22 +112,7 @@ boolean connect_to_wifi() {
 			delay(5000);
 		}
 	}
-	if (config.net.status == WL_CONNECTED) {
-		Serial.println("CONNECTED");
-		Serial.print("  SSID: ");
-		Serial.println(WiFi.SSID());
-		Serial.print("  IP Address: ");
-		print_address(WiFi.localIP());
-		Serial.println();
-		Serial.print("  Signal strength (RSSI): ");
-		Serial.print(WiFi.RSSI());
-		Serial.println("dB");
-		return true;
-	} else {
-		Serial.print("Failed to connect to ");
-		Serial.println((char *)config.net.ssid);
-		return false;
-	}
+	return (config.net.status == WL_CONNECTED);
 }
 
 
@@ -129,8 +120,9 @@ boolean connect_to_pool() {
 	udp.begin(config.net.port);
 	int tries = 3;
 	boolean success = false;
+	message_t m = get_message("HELO");
 	while (tries > 0 && !success) {
-		send_ping();
+		send(m.bytes, sizeof(message_t));
 		tries--;
 		delay(1000);
 		success = receive_ping();
@@ -213,12 +205,20 @@ void do_server_command() {
 		print_hex(buf, packet_size);
 		Serial.println();
 		cmd = parse_message(buf, packet_size, &m);
+		size_t len = 0;
 		switch (cmd) {
 			case HELO:
-				print_configuration();
+				len = sizeof(message_t) + 40;
+				m = get_message("INFO");
+				m.header.size = 40;
+				memcpy(response, m.bytes, sizeof(message_t));
+				memcpy(&response[sizeof(message_t)], config.net.address, 40);
+				send(response, len);
 				break;
 			case WAIT:
 				status.paused = true;
+				m = get_message("MACK");
+				send(m.bytes, sizeof(message_t));
 			case MINE: // TODO
 			case TEST:
 				Serial.println("TEST");
@@ -250,87 +250,27 @@ void do_server_command() {
 				break;
 		}
 	}
- 	//
-	char ch = 0;
-	if (Serial.available()) {
-		ch = Serial.read();
-	}
-    if (ch) {
-      switch (ch) {
-        case 'm':
-        case 'M':
-			char buf[161];
-			int num;
-			num = Serial.readBytes(buf, 160);
-			if (num == 160) {
-				uint8_t bytes[80];
-				from_hex(buf, 160, bytes);
-				load_block(bytes);
-				if (status.valid) {
-					Serial.println("\nMINING BLOCK...");
-					print_hex(status.target, HASH_SIZE);
-					Serial.println(":target");
-					status.paused = false;
-				} else {
-					Serial.println("INVALID BLOCK");
-				}
-				print_block();
-			} else {
-				Serial.print("ERROR: ");
-				Serial.print(num);
-				Serial.println(" bytes received\n");
-			}
-			break;
-        case 's':
-        case 'S':
-			print_status();
-    		break;
-		case 'p':
-		case 'P':
-			if (status.valid && !status.mined) {
-				status.paused = !status.paused;
-				if (status.paused) {
-					status.cumulative_time += millis() - status.start_time;
-					Serial.println("PAUSED");
-				} else {
-					Serial.println("RESUMING");
-					status.start_time = millis();
-				}
-			} else {
-				Serial.println("WAITING");
-			}
-			break;
-        default:
-			Serial.print("UNKNOWN COMMAND '");
-        	Serial.print(ch);
-        	Serial.println("'");
-        	break;
-      };
-    }
 }
 
 int parse_message(uint8_t *buf, size_t size, message_t *m) {
 	if (size >= sizeof(message_t)) {
 		memcpy(m->bytes, buf, sizeof(message_t));
-		return get_command(m->header.command);
+		return get_type(m->header.type);
 	} else {
 		Serial.println("Message Parse Failed");
 		return -1;
 	}
 }
 
-int get_command(uint8_t *cmd) {
+int get_type(uint8_t *cmd) {
 	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
+	if (strncmp("PACK", (char *)cmd, 4) == 0) return PACK;
 	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
 	if (strncmp("BEST", (char *)cmd, 4) == 0) return BEST;
 	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
 	Serial.println("Command Parse Failed");
 	return -1;
-}
-
-boolean notify_server(block_t *block) {
-	return false;
 }
 
 
@@ -427,24 +367,6 @@ void print_hex(uint8_t* bytes, unsigned int count) {
 	Serial.print(result);
 }
 
-// WiFi
-void printMacAddress() {
-	byte mac[6];
-	WiFi.macAddress(mac);
-	Serial.print("MAC Address: ");
-	Serial.print(mac[5],HEX);
-	Serial.print(":");
-	Serial.print(mac[4],HEX);
-	Serial.print(":");
-	Serial.print(mac[3],HEX);
-	Serial.print(":");
-	Serial.print(mac[2],HEX);
-	Serial.print(":");
-	Serial.print(mac[1],HEX);
-	Serial.print(":");
-	Serial.println(mac[0],HEX);
-}
-
 void print_configuration() {
 	if (memcmp((const uint8_t*)config.net.magic, MAGIC, 4)) {
 		Serial.println("NOT CONFIGURED");
@@ -452,12 +374,8 @@ void print_configuration() {
 		Serial.println("CONFIGURATION");
 		Serial.print("  SMM Magic: ");
 		print_hex(config.net.magic, 4);
-		Serial.print("\n  SMM Version: ");
-		print_version();
 		Serial.print("\n  WiFi Network: ");
 		Serial.println((char *)config.net.ssid);
-		Serial.print("  Pool Server: smm://");
-		print_server_address();
 		Serial.print("\n  Address: ");
 		Serial.print((char *)config.net.address);
 		Serial.print("\n  Status: ");
@@ -466,18 +384,6 @@ void print_configuration() {
 	}
 }
 
-void print_version() {
-	char version[8];
-	version[0] = '0' + config.net.version[0];
-	version[1] = '.';
-	version[2] = '0' + config.net.version[1];
-	version[3] = '.';
-	version[4] = '0' + config.net.version[2];
-	version[5] = '-';
-	version[6] = config.net.version[3];
-	version[7] = 0;
-	Serial.print(version);
-}
 
 void print_server_address() {
 	uint8_t *address = config.net.server;
@@ -501,12 +407,10 @@ void print_ip_address(IPAddress addr) {
 	Serial.print(addr[3]);
 }
 
-void send_ping() {
-	message_t message = get_message("HELO");
-//	uint8_t buf[] = "ping";
+void send(uint8_t *bytes, size_t size) {
 	IPAddress remote = config.net.server;
 	udp.beginPacket(remote, config.net.port);
-	udp.write(message.bytes, sizeof(message));
+	udp.write(bytes, size);
 	if (! udp.endPacket()) {
 		Serial.println("UDP Send error");
 	}
@@ -526,12 +430,12 @@ boolean receive_ping() {
 	}
 }
 
-message_t get_message(const char *command) {
+message_t get_message(const char *type) {
 	message_t m;
 	memcpy(m.header.magic, MAGIC, 4);
 	memcpy(m.header.version, VERSION, 4);
-	m.header.number = millis();
-	memcpy(m.header.command, command, 4);
+	m.header.nonce = millis();
+	memcpy(m.header.type, type, 4);
 	m.header.size = 0;
 	return m;
 }
