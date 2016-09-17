@@ -133,7 +133,7 @@ boolean connect_to_wifi() {
 	return (config.net.status == WL_CONNECTED);
 }
 
-// TODO: Not seeing HELO at the pool server
+
 boolean connect_to_mining_pool() {
 	udp.begin(config.net.port);
 	int tries = 3;

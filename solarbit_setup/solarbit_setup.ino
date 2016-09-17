@@ -5,8 +5,42 @@
 uint8_t MAGIC[] = "SMM";
 uint8_t VERSION[] = {1, 0, 0, 'A'};
 
+#define MAX_UDP_PAYLOAD 1472
 #define UDP_PORT 21314 // "SB"
+
 WiFiUDP udp;
+
+enum Protocol {
+	// Common
+	PING = 0,
+	HELO,
+	NACK, // maybe
+	// POOL
+	POOL,
+	STAT,
+	WAIT,
+	MINE,
+	TEST, // TEMP
+	POST, // reset - maybe?
+	// SMM
+	INFO,
+	DONE, // TODO: Encryption
+	BEST, // TODO: Encryption
+};
+
+typedef struct {
+	uint8_t magic[4];
+	uint8_t version[4];
+	uint32_t nonce;
+	uint8_t message_type[4];
+	uint32_t payload_size;
+} message_header_t;
+
+typedef union {
+	message_header_t header;
+	uint8_t bytes[sizeof(message_header_t)];
+} message_t;
+
 
 typedef struct {
 	uint8_t magic[4];
@@ -38,6 +72,8 @@ typedef enum {
 } config_field_t;
 
 config_field_t field = IDLE;
+
+uint8_t response[MAX_UDP_PAYLOAD];
 
 void setup() {
 	memset(input_buffer, 0, 64);
@@ -125,11 +161,11 @@ void loop() {
 					Serial.print("WIFI: ");
 					if (connect_to_wifi()) {
 						Serial.println("CONNECTED");
-						Serial.print("POOL: ");
+						Serial.println("Contacting Pool...");
 						if (check_pool() == true) {
-							Serial.println("ONLINE");
+							Serial.println("POOL: ONLINE");
 						} else {
-							Serial.println("OFFLINE");
+							Serial.println("POOL: OFFLINE");
 						}
 						udp.stop();
 						WiFi.disconnect();
@@ -462,6 +498,7 @@ char *trim_string(char *str) {
 }
 
 boolean connect_to_wifi() {
+	config.net.status = WL_IDLE_STATUS;
 	if (config.net.status != WL_CONNECTED) {
 		int tries = 3;
 		while (config.net.status != WL_CONNECTED && tries > 0) {
@@ -476,47 +513,110 @@ boolean connect_to_wifi() {
 	return config.net.status == WL_CONNECTED;
 }
 
+
 boolean check_pool() {
 	udp.begin(config.net.port);
 	int tries = 3;
-	boolean success = false;
-	while (tries > 0 && !success) {
-		send_ping();
-		tries--;
-		delay(1000);
-		success = receive_ping();
-	}
-	return success;
-}
+	int success = 0;
 
-void send_ping() {
-	uint8_t buf[] = "ping";
 	IPAddress remote = config.net.server;
-	Serial.print("Sending ping to ");
+	Serial.print("Sending HELO to ");
 	Serial.print(remote);
 	Serial.print(":");
 	Serial.print(config.net.port);
 	Serial.println();
-	udp.beginPacket(remote, config.net.port);
-	udp.write(buf, 4);
-	if (! udp.endPacket()) {
-		Serial.println("UDP Send error");
+
+	message_t m = build_message_header("HELO", 0);
+	dump_hex(m.bytes, sizeof(message_t));
+	Serial.println();
+	while (tries > 0 && !success) {
+		if (send_packet(m.bytes, sizeof(message_t))) {
+			tries--;
+			delay(1000);
+			int packet_size = receive_packet(response, MAX_UDP_PAYLOAD);
+			if (packet_size == sizeof(message_t)) {
+				message_t m2;
+				int type = parse_message_header(response, sizeof(message_t), &m2);
+				Serial.print("Received ");
+				Serial.print(get_message_type(type));
+				Serial.print(" from ");
+				Serial.print(remote);
+				Serial.print(":");
+				Serial.print(config.net.port);
+				Serial.println();
+				dump_hex(m2.bytes, sizeof(message_t));
+				Serial.println();
+				success = (type == HELO);
+			}
+		} else {
+			Serial.println("Packet Send Error");
+		}
+	}
+	return success > 0;
+}
+
+message_t build_message_header(const char *type, int payload_size) {
+	message_t m;
+	memcpy(m.header.magic, MAGIC, 4);
+	memcpy(m.header.version, VERSION, 4);
+	m.header.nonce = millis();
+	memcpy(m.header.message_type, type, 4);
+	m.header.payload_size = payload_size;
+	return m;
+}
+
+
+int parse_message_header(uint8_t *buf, size_t size, message_t *m) {
+	if (size >= sizeof(message_t)) {
+		memcpy(m->bytes, buf, sizeof(message_t));
+		return get_message_type(m->header.message_type);
+	} else {
+		return -1;
 	}
 }
 
-boolean receive_ping() {
-	int packet_size = udp.parsePacket();
-	if (packet_size) {
-		uint8_t buf[packet_size];
-		udp.read(buf, packet_size);
-		IPAddress remote = udp.remoteIP();
-		Serial.print("UDP packet received from ");
-		print_ip_address(remote);
-		Serial.print(": ");
-		print_hex(buf, packet_size);
-		Serial.println();
-		return true;
-	} else {
-		return false;
+
+const char *get_message_type(int type) {
+	switch (type) {
+		case PING: return "PING";
+		case HELO: return "HELO";
+		case INFO: return "INFO";
+		case DONE: return "DONE";
+		case BEST: return "BEST";
+		default: return "NACK";
 	}
+}
+
+
+int get_message_type(uint8_t *cmd) {
+	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
+	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
+	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
+	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
+	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
+	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
+	return NACK;
+}
+
+
+boolean send_packet(uint8_t *bytes, size_t size) {
+	IPAddress remote = config.net.server;
+	udp.beginPacket(remote, config.net.port);
+	udp.write(bytes, size);
+	return udp.endPacket() != 0;
+}
+
+
+int receive_packet(uint8_t *buf, int size) {
+	int packet_size = udp.parsePacket();
+	if (packet_size == 0) {
+		return 0;
+	}
+	if (packet_size > MAX_UDP_PAYLOAD) {
+		udp.flush();
+		return 0;
+	}
+	memset(buf, 0, size);
+	udp.read(buf, packet_size);
+	return packet_size;
 }
