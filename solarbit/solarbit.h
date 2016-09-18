@@ -1,3 +1,6 @@
+// Solar Mining Module Prototype A
+// https://www.solarbit.cc
+
 #include <Arduino.h>
 
 uint8_t MAGIC[] =  {'S', 'M', 'M', 0}; // Solar Mining Module "SMM"

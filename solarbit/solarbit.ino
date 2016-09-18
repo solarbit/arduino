@@ -57,7 +57,11 @@ void setup() {
 		success = connect_to_wifi();
 	}
 	if (success) {
-		success = connect_to_mining_pool();
+//		success = connect_to_mining_pool();
+		udp.begin(config.net.port);
+		message_t m = build_message_header("HELO", 0);
+		send_packet(m.bytes, sizeof(message_t));
+		delay(500);
 	}
 	status.wait = true;
 }
@@ -214,30 +218,24 @@ void check_pool() {
 		message_t m;
 		int cmd = parse_message_header(response, packet_size, &m);
 		size_t payload_size = packet_size - sizeof(message_t);
-		size_t len = 0;
+		// size_t len = 0;
 		switch (cmd) {
 			case HELO:
-				m = build_message_header("INFO", 40);
-				memcpy(response, m.bytes, sizeof(message_t));
-				memcpy(&response[sizeof(message_t)], config.net.address, 40);
-				len = sizeof(message_t) + 40;
-				send_packet(response, len);
+				send_message("INFO", 40, config.net.address);
 				break;
 			case POOL:
-				send_best_result(); // For now
+				send_message("WAIT", 0, NULL);
 				break;
 			case STAT:
 				send_best_result(); // For now
 				break;
 			case MINE:
 				// TODO - NEED COINBASE SPEC, BLOCK HEIGHT, MERKLE PATH...
-				m = build_message_header("NACK", 0);
-				memcpy(response, m.bytes, sizeof(message_t));
-				send_packet(response, sizeof(message_t));
+				send_message("NACK", 0, NULL);
 				break;
 			case WAIT:
 				status.wait = true;
-				send_best_result(); // For now
+				send_message("WAIT", 0, NULL);
 				break;
 			case TEST:
 				if (m.header.payload_size >= sizeof(block_t) && sizeof(block_t) <= payload_size)  {
@@ -255,15 +253,11 @@ void check_pool() {
 					status.mined = false;
 					status.wait = false;
 				} else {
-					m = build_message_header("NACK", 0);
-					memcpy(response, m.bytes, sizeof(message_t));
-					send_packet(response, sizeof(message_t));
+					send_message("NACK", 0, NULL);
 				}
 				break;
 			default:
-				m = build_message_header("NACK", 0);
-				memcpy(response, m.bytes, sizeof(message_t));
-				send_packet(response, sizeof(message_t));
+				send_message("NACK", 0, NULL);
 				break;
 		}
 	}
@@ -278,6 +272,15 @@ void send_best_result() {
 	memcpy(&response[sizeof(message_t)], &status.best_nonce, payload_size);
 	int len = sizeof(message_t) + payload_size;
 	send_packet(response, len);
+}
+
+
+boolean send_message(const char *type, int payload_size, uint8_t *payload) {
+	message_t m = build_message_header(type, payload_size);
+	memcpy(response, m.bytes, sizeof(message_t));
+	memcpy(&response[sizeof(message_t)], payload, payload_size);
+	int len = sizeof(message_t) + payload_size;
+	return send_packet(response, len);
 }
 
 
