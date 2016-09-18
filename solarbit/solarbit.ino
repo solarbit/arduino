@@ -1,5 +1,6 @@
 // Solar Mining Module Prototype A
 // https://www.solarbit.cc
+// NOTE: Run solarbit_setup first to configure EEPROM parameters!
 
 #include <EEPROM.h>
 #include <WiFi101.h>
