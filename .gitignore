@@ -1,6 +1,7 @@
 .DS_Store
-eeprom_check
 morse
 WiFiCheck
+eeprom_check
+xxtea_test
 /libraries/*
-!/libraries/Crypto
+!/libraries/SolarBit-SMMA

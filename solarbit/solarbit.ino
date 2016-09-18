@@ -4,26 +4,7 @@
 #include <EEPROM.h>
 #include <WiFi101.h>
 #include <WiFiUdp.h>
-#include <sha256.h>
-#include "solarbit.h"
-
-enum Protocol {
-	// Common
-	PING = 0,
-	HELO,
-	NACK, // maybe
-	// POOL
-	POOL,
-	STAT,
-	WAIT,
-	MINE,
-	TEST, // TEMP
-	POST, // reset - maybe?
-	// SMM
-	INFO,
-	DONE, // TODO: Encryption
-	BEST, // TODO: Encryption
-};
+#include <SolarBit.h>
 
 typedef struct {
 	boolean valid;
@@ -42,12 +23,9 @@ typedef struct {
 config_t config;
 status_t status;
 block_t block;
-
-WiFiUDP udp;
-
 uint8_t response[MAX_UDP_PAYLOAD];
-
 uint8_t coinbase[1024]; // TODO
+WiFiUDP udp;
 
 
 void setup() {
@@ -58,7 +36,7 @@ void setup() {
 	}
 	if (success) {
 //		success = connect_to_mining_pool();
-		udp.begin(config.net.port);
+		udp.begin(config.param.port);
 		message_t m = build_message_header("HELO", 0);
 		send_packet(m.bytes, sizeof(message_t));
 		delay(500);
@@ -68,16 +46,11 @@ void setup() {
 
 
 void loop() {
-	if (config.net.status == WL_CONNECTED) {
+	if (WiFi.status() == WL_CONNECTED) {
 		check_pool();
 		boolean success = mine();
 		if (success) {
-			int payload_size = 4;
-			message_t m = build_message_header("DONE", payload_size);
-			memcpy(response, m.bytes, sizeof(message_t));
-			memcpy(&response[sizeof(message_t)], &block.header.nonce, payload_size);
-			int len = sizeof(message_t) + payload_size;
-			send_packet(response, len);
+			send_message("DONE", 4, (uint8_t *) &block.header.nonce);
 		}
 	} else {
 		delay(10000);
@@ -120,26 +93,31 @@ boolean load_configuration_from_eeprom() {
 	for (unsigned int i = 0; i < sizeof(config_t); i++) {
 		config.bytes[i] = EEPROM.read(i);
 	}
-	return memcmp((const uint8_t*)config.net.magic, MAGIC, 4) == 0;
+	return is_configuration_valid();
 }
 
 
+boolean is_configuration_valid() {
+	return memcmp((const uint8_t*)config.param.magic, MAGIC, 4) == 0
+		&& memcmp((const uint8_t*)config.param.trailer, MAGIC, 4) == 0;
+}
+
 boolean connect_to_wifi() {
-	config.net.status = WL_IDLE_STATUS;
+	int status = WiFi.status();
 	int tries = 3;
-	while (config.net.status != WL_CONNECTED && tries > 0) {
-		config.net.status = WiFi.begin((char *)config.net.ssid, (char *)config.net.password);
-		if (config.net.status != WL_CONNECTED) {
+	while (status != WL_CONNECTED && tries > 0) {
+		status = WiFi.begin((char *)config.param.ssid, (char *)config.param.password);
+		if (status != WL_CONNECTED) {
 			tries--;
 			delay(5000);
 		}
 	}
-	return (config.net.status == WL_CONNECTED);
+	return (WiFi.status() == WL_CONNECTED);
 }
 
 
 boolean connect_to_mining_pool() {
-	udp.begin(config.net.port);
+	udp.begin(config.param.port);
 	int tries = 3;
 	boolean success = false;
 	message_t m = build_message_header("HELO", 0);
@@ -221,7 +199,7 @@ void check_pool() {
 		// size_t len = 0;
 		switch (cmd) {
 			case HELO:
-				send_message("INFO", 40, config.net.address);
+				send_message("INFO", 40, config.param.address);
 				break;
 			case POOL:
 				send_message("WAIT", 0, NULL);
@@ -288,7 +266,7 @@ message_t build_message_header(const char *type, int payload_size) {
 	message_t m;
 	memcpy(m.header.magic, MAGIC, 4);
 	memcpy(m.header.version, VERSION, 4);
-	m.header.nonce = millis();
+	m.header.sync = millis();
 	memcpy(m.header.message_type, type, 4);
 	m.header.payload_size = payload_size;
 	return m;
@@ -329,8 +307,8 @@ int get_message_type(uint8_t *cmd) {
 
 
 boolean send_packet(uint8_t *bytes, size_t size) {
-	IPAddress remote = config.net.server;
-	udp.beginPacket(remote, config.net.port);
+	IPAddress remote = config.param.server;
+	udp.beginPacket(remote, config.param.port);
 	udp.write(bytes, size);
 	return udp.endPacket() != 0;
 }
