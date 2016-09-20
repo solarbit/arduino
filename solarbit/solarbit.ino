@@ -24,22 +24,23 @@ typedef struct {
 config_t config;
 status_t status;
 block_t block;
-uint8_t response[MAX_UDP_PAYLOAD];
+uint8_t packet[MAX_UDP_PAYLOAD];
 uint8_t coinbase[1024]; // TODO
 WiFiUDP udp;
 
 
 void setup() {
+	Serial.begin(9600);
+	while (! Serial);
 	boolean success;
 	success = load_configuration_from_eeprom();
 	if (success) {
 		success = connect_to_wifi();
 	}
 	if (success) {
-//		success = connect_to_mining_pool();
 		udp.begin(config.param.port);
-		message_t m = build_message_header("HELO", 0);
-		send_packet(m.bytes, sizeof(message_t));
+		Serial.println("SMM Ready");
+		send_message("HELO", 0, NULL);
 		delay(500);
 	}
 	status.wait = true;
@@ -121,12 +122,11 @@ boolean connect_to_mining_pool() {
 	udp.begin(config.param.port);
 	int tries = 3;
 	boolean success = false;
-	message_t m = build_message_header("HELO", 0);
 	while (tries > 0 && !success) {
-		send_packet(m.bytes, sizeof(message_t));
+		send_message("HELO", 0, NULL);
 		tries--;
 		delay(1000);
-		success = receive_packet(response, MAX_UDP_PAYLOAD);
+		success = receive_packet(packet, MAX_UDP_PAYLOAD);
 	}
 	return success > 0;
 }
@@ -192,18 +192,21 @@ void do_hash(block_t *block, uint8_t *hash) {
 
 
 void check_pool() {
-	int packet_size = receive_packet(response, MAX_UDP_PAYLOAD);
+	int packet_size = receive_packet(packet, MAX_UDP_PAYLOAD);
 	if (packet_size) {
 		message_t m;
-		int cmd = parse_message_header(response, packet_size, &m);
+		int cmd = parse_message_header(packet, packet_size, &m);
 		size_t payload_size = packet_size - sizeof(message_t);
 		// size_t len = 0;
 		switch (cmd) {
-			case HELO:
-				send_message("INFO", 40, config.param.address);
+			case PING:
+				send_message("HELO", 0, NULL);
+				break;
+			case INFO:
+				send_message("NODE", strlen((char *)config.param.address), config.param.address);
 				break;
 			case POOL:
-				send_message("WAIT", 0, NULL);
+				send_message("OKAY", 0, NULL);
 				break;
 			case STAT:
 				send_best_result(); // For now
@@ -214,11 +217,11 @@ void check_pool() {
 				break;
 			case WAIT:
 				status.wait = true;
-				send_message("WAIT", 0, NULL);
+				//send_message("OKAY", 0, NULL);
 				break;
 			case TEST:
 				if (m.header.payload_size >= sizeof(block_t) && sizeof(block_t) <= payload_size)  {
-					memcpy(block.bytes, &response[sizeof(message_t)], sizeof(block_t));
+					memcpy(block.bytes, &packet[sizeof(message_t)], sizeof(block_t));
 					status.valid = false;
 					if (block.header.version > 0) {
 						status.valid = true;
@@ -245,23 +248,56 @@ void check_pool() {
 
 // TODO: It's a start...
 void send_best_result() {
-	int payload_size = sizeof(uint32_t);
-	message_t m = build_message_header("BEST", payload_size);
-	memcpy(response, m.bytes, sizeof(message_t));
-	memcpy(&response[sizeof(message_t)], &status.best_nonce, payload_size);
-	int len = sizeof(message_t) + payload_size;
-	send_packet(response, len);
+	send_message("BEST", sizeof(uint32_t), (uint8_t *)&status.best_nonce);
 }
 
 
 boolean send_message(const char *type, int payload_size, uint8_t *payload) {
-	message_t m = build_message_header(type, payload_size);
-	memcpy(response, m.bytes, sizeof(message_t));
-	memcpy(&response[sizeof(message_t)], payload, payload_size);
-	int len = sizeof(message_t) + payload_size;
-	return send_packet(response, len);
+	int header_size = sizeof(message_t);
+	int pkcs7pad = 0;
+	if (payload_size > 0) {
+		pkcs7pad = 4 - payload_size % 4;
+	}
+	int n = (payload_size + pkcs7pad) / 4;
+	int packet_size = header_size + payload_size + pkcs7pad;
+
+	Serial.println(type); // remove
+	Serial.print("size=");
+	Serial.print(payload_size); // remove
+	Serial.print(" pad=");
+	Serial.print(pkcs7pad); // remove
+	Serial.print(" n=");
+	Serial.println(n);
+
+	memset(packet, 0, MAX_UDP_PAYLOAD);
+	message_t m = build_message_header(type, payload_size + pkcs7pad);
+	memcpy(packet, m.bytes, header_size);
+	if (payload_size > 0) {
+		memcpy(&packet[header_size], payload, payload_size);
+		memset(&packet[header_size + payload_size], pkcs7pad, pkcs7pad);
+		print_hex(packet, packet_size); // remove
+		uint32_t *offset = (uint32_t *) &packet[header_size];
+		xxtea_encode(offset, n, config.param.key);
+	}
+	print_hex(packet, packet_size); // remove
+	return send_packet(packet, packet_size);
 }
 
+
+void print_hex(uint8_t *buf, int length) {
+	for (int i = 0; i < length; i++) {
+		if (i > 0 && i % 32 == 0) {
+			Serial.println();
+		}
+		Serial.print(' ');
+		int value = buf[i];
+		if (value <= 0x0F) {
+			Serial.print('0');
+		}
+		Serial.print(value, HEX);
+	}
+	Serial.println();
+}
 
 message_t build_message_header(const char *type, int payload_size) {
 	message_t m;
@@ -286,22 +322,26 @@ int parse_message_header(uint8_t *buf, size_t size, message_t *m) {
 
 const char *get_message_type(int type) {
 	switch (type) {
-		case PING: return "PING";
 		case HELO: return "HELO";
+		case NODE: return "NODE";
 		case INFO: return "INFO";
 		case DONE: return "DONE";
 		case BEST: return "BEST";
+		case OKAY: return "OKAY";
 		default: return "NACK";
 	}
 }
 
 
 int get_message_type(uint8_t *cmd) {
+	if (strncmp("PING", (char *)cmd, 4) == 0) return PING;
 	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
+	if (strncmp("INFO", (char *)cmd, 4) == 0) return INFO;
 	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
-	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
+	if (strncmp("STOP", (char *)cmd, 4) == 0) return STOP;
+	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
 	return NACK;
 }

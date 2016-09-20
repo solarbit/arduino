@@ -26,6 +26,7 @@ enum MessageTypes {
 	NODE,
 	POOL,
 	MINE,
+	STOP,
 	DONE,
 	WAIT,
 	STAT,
