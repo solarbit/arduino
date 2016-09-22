@@ -23,8 +23,8 @@ typedef enum {
 } config_state_t;
 
 config_state_t state = IDLE;
+packet_t packet;
 
-uint8_t response[MAX_UDP_PAYLOAD];
 
 void setup() {
 	memset(input_buffer, 0, 64);
@@ -158,6 +158,7 @@ void loop() {
 	}
 }
 
+
 boolean do_user_command() {
 	char *command;
 	boolean success;
@@ -267,10 +268,10 @@ void print_configuration() {
 }
 
 
-
 void dump_config() {
 	dump_hex(config.bytes, sizeof(config_t));
 }
+
 
 void dump_eeprom() {
 	for (int i = 0; i < EEPROM.length(); i++) {
@@ -285,6 +286,7 @@ void dump_eeprom() {
 		}
 	}
 }
+
 
 boolean write_eeprom() {
 	int len = sizeof(config_t);
@@ -314,6 +316,7 @@ boolean write_eeprom() {
 	Serial.println();
 	return true;
 }
+
 
 boolean select_network() {
 	// scan for nearby networks:
@@ -398,7 +401,7 @@ boolean connect_to_wifi() {
 boolean check_pool() {
 	udp.begin(config.param.port);
 	int tries = 3;
-	int success = 0;
+	boolean success = false;
 
 	IPAddress remote = config.param.server;
 	Serial.print("Sending HELO to ");
@@ -406,85 +409,53 @@ boolean check_pool() {
 	Serial.print(":");
 	Serial.print(config.param.port);
 	Serial.println();
-
-	message_t m = build_message_header("HELO", 0);
-	dump_hex(m.bytes, sizeof(message_t));
-	Serial.println();
 	while (tries > 0 && !success) {
-		if (send_packet(m.bytes, sizeof(message_t))) {
+		if (send_hello()) {
 			tries--;
 			delay(1000);
-			int packet_size = receive_packet(response, MAX_UDP_PAYLOAD);
-			if (packet_size == sizeof(message_t)) {
-				message_t m2;
-				int type = parse_message_header(response, sizeof(message_t), &m2);
-				Serial.print("Received ");
-				Serial.print(get_message_type(type));
-				Serial.print(" from ");
-				Serial.print(remote);
-				Serial.print(":");
-				Serial.print(config.param.port);
-				Serial.println();
-				dump_hex(m2.bytes, sizeof(message_t));
-				Serial.println();
-				success = (type == HELO);
-			}
-		} else {
-			Serial.println("Packet Send Error");
+			success = receive_sync();
 		}
 	}
-	return success > 0;
-}
-
-message_t build_message_header(const char *type, int payload_size) {
-	message_t m;
-	memcpy(m.header.magic, MAGIC, 4);
-	memcpy(m.header.version, VERSION, 4);
-	m.header.sync = millis();
-	memcpy(m.header.message_type, type, 4);
-	m.header.payload_size = payload_size;
-	return m;
+	return success;
 }
 
 
-int parse_message_header(uint8_t *buf, size_t size, message_t *m) {
-	if (size >= sizeof(message_t)) {
-		memcpy(m->bytes, buf, sizeof(message_t));
-		return get_message_type(m->header.message_type);
-	} else {
-		return -1;
-	}
-}
-
-
-const char *get_message_type(int type) {
-	switch (type) {
-		case PING: return "PING";
-		case HELO: return "HELO";
-		case INFO: return "INFO";
-		case DONE: return "DONE";
-		case BEST: return "BEST";
-		default: return "NACK";
-	}
-}
-
-
-int get_message_type(uint8_t *cmd) {
-	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
-	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
-	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
-	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
-	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
-	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
-	return NACK;
-}
-
-
-boolean send_packet(uint8_t *bytes, size_t size) {
+boolean send_hello() {
+	memset(packet.bytes, 0, sizeof(packet_t));
+	memcpy(packet.message.header.magic, MAGIC, 4);
+	memcpy(packet.message.header.version, VERSION, 4);
+	packet.message.header.sync = millis();
+	memcpy(packet.message.header.message_type, "HELO", 4);
+	packet.message.header.payload_size = 0;
 	IPAddress remote = config.param.server;
 	udp.beginPacket(remote, config.param.port);
-	udp.write(bytes, size);
+	udp.write(packet.bytes, sizeof(message_header_t));
 	return udp.endPacket() != 0;
+}
+
+
+boolean receive_sync() {
+	memset(packet.bytes, 0, sizeof(packet_t));
+	int packet_size = receive_packet(packet.bytes, sizeof(packet_t));
+	if (packet_size <= 0) return NONE;
+	if (packet_size < (int) sizeof(message_header_t)) {
+		Serial.print("ERROR: packet size=");
+		Serial.println(packet_size);
+		print_hex(packet.bytes, packet_size);
+		return false;
+	}
+	char typestr[5];
+	memcpy(typestr, &packet.message.header.message_type, 4);
+	typestr[4] = 0;
+	IPAddress remote = config.param.server;
+	Serial.print("Received ");
+	Serial.print(typestr);
+	Serial.print(" from ");
+	Serial.print(remote);
+	Serial.print(":");
+	Serial.print(config.param.port);
+	Serial.println();
+	return get_message_type(packet.message.header.message_type) == SYNC;
 }
 
 
@@ -500,6 +471,26 @@ int receive_packet(uint8_t *buf, int size) {
 	memset(buf, 0, size);
 	udp.read(buf, packet_size);
 	return packet_size;
+}
+
+
+int get_message_type(uint8_t *cmd) {
+	if (strncmp("PING", (char *)cmd, 4) == 0) return PING;
+	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
+	if (strncmp("SYNC", (char *)cmd, 4) == 0) return SYNC;
+	if (strncmp("NODE", (char *)cmd, 4) == 0) return NODE;
+	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
+	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
+	if (strncmp("DONE", (char *)cmd, 4) == 0) return DONE;
+	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
+	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
+
+	if (strncmp("OKAY", (char *)cmd, 4) == 0) return OKAY;
+	if (strncmp("INFO", (char *)cmd, 4) == 0) return INFO;
+	if (strncmp("STOP", (char *)cmd, 4) == 0) return STOP;
+	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
+
+	return NACK;
 }
 
 

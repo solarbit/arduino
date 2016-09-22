@@ -11,8 +11,12 @@ uint8_t VERSION[] = {0, 3, 0, 'A'}; // 32 bit of www.semver.org
 #define UDP_PORT 21314 // "SB" as a 16-bit big-endian integer
 #define MAX_UDP_PAYLOAD 1472 // Reduce packet fragmentation: 1500 MTU - 20 IP hdr - 8 UDP hdr = 1472 bytes
 
+// #define MESSAGE_HEADER_SIZE 20
+#define MAX_PAYLOAD_SIZE 1452
+
 #define HASH_SIZE 32 // SHA-256
 #define BLOCK_HEADER_SIZE 80 // Bitcoin Block Header Size in bytes
+#define ERROR -1
 
 uint8_t const MAX_HASH[] = {
 	0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -22,25 +26,26 @@ uint8_t const MAX_HASH[] = {
 
 // SolarBit Mining Protocol Message Types
 enum MessageTypes {
-	HELO = 0,
+	NONE = 0,
+	HELO,
 	NODE,
 	POOL,
 	MINE,
-	STOP,
 	DONE,
 	WAIT,
 	STAT,
-	INFO,
-	OKAY,
 	WARN,
 	// Maybes...
+	SYNC,
+	INFO,
+	STOP,
+	OKAY,
 	BEST,
-	TEST, // TEMP
-	POST, // reset - maybe?
-	NACK, // maybe
+	TEST,
+	POST,
+	NACK,
 	PING
 };
-
 
 // SolarBit Mining Protocol Message Header Data Structure
 typedef struct {
@@ -51,10 +56,22 @@ typedef struct {
 	uint32_t payload_size;
 } message_header_t;
 
+/*
 typedef union {
 	message_header_t header;
 	uint8_t bytes[sizeof(message_header_t)];
 } message_t;
+*/
+
+typedef struct {
+	message_header_t header;
+	uint8_t payload[MAX_UDP_PAYLOAD - sizeof(message_header_t)];
+} message_t;
+
+typedef union {
+	message_t message;
+	uint8_t bytes[sizeof(message_t)];
+} packet_t;
 
 
 // SolarBit SMM EEPROM Configuration Data Structure

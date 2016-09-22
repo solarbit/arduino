@@ -20,7 +20,7 @@ All messages have the same format. Each message has a 20-byte header, and an opt
 
 `SIZE` is a 32 bit little-endian number holding the size of the subsequent payload in bytes.
 
-`PAYLOAD` content depends on the message type. The payload limit of 1452 bytes is chosen to reduce packet fragmentation to a minimum. i.e. MTUs will normally not fragment a packet of 1500 bytes, i.e.: 1452 bytes = 1500 bytes - (20 byte IP header + 8 UDP header + 20 byte SMM header).
+`PAYLOAD` is always encrypted using XXTEA with PKCS#7 padding. The plaintext content depends on the message type. There is a payload limit of 1452 bytes is chosen to reduce packet fragmentation to a minimum. i.e. MTUs will normally not fragment a packet of 1500 bytes, i.e.: 1452 bytes = 1500 bytes - (20 byte IP header + 8 UDP header + 20 byte SMM header).
 
 ## Handshake
 ```c
