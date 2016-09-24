@@ -5,7 +5,7 @@
 #include <EEPROM.h>
 #include <WiFi101.h>
 #include <WiFiUdp.h>
-#include <SolarBit.h>
+#include <SolarBit_SMM.h>
 
 #define MAX_COINBASE_SIZE 100
 
@@ -32,7 +32,6 @@ block_t block;
 packet_t packet;
 WiFiUDP udp;
 
-
 void setup() {
 	status.tethered = is_tethered();
 	boolean success = load_configuration_from_eeprom();
@@ -42,6 +41,8 @@ void setup() {
 	if (success) {
 		udp.begin(config.param.port);
 		println("SolarBit Mining Module Ready");
+		print("SMM Shield Status: ");
+		println(SMM.status());
 		println();
 		send_message(HELO);
 		delay(500);
@@ -78,7 +79,7 @@ void do_indicator() {
 
 boolean mine() {
 	if (status.valid && !status.paused && !status.mined) {
-		do_hash(&block, status.current_hash);
+		SMM.doHash(&block, status.current_hash);
 		int compare = memcmp(status.current_hash, status.target, HASH_SIZE);
 		if (compare <= 0) {
 			status.mined = true;
@@ -190,15 +191,15 @@ double get_hashrate() {
 }
 
 
-void do_hash(block_t *block, uint8_t *hash) {
-	uint8_t temp[HASH_SIZE];
-	sha256_digest(block->bytes, sizeof(block_t), temp);
-	uint8_t temp2[HASH_SIZE];
-	sha256_digest(temp, HASH_SIZE, temp2);
-	for (int i = 0, j = 31; i < HASH_SIZE; i++, j--) {
-		hash[i] = temp2[j];
-	}
-}
+// void do_hash(block_t *block, uint8_t *hash) {
+// 	uint8_t temp[HASH_SIZE];
+// 	sha256_digest(block->bytes, sizeof(block_t), temp);
+// 	uint8_t temp2[HASH_SIZE];
+// 	sha256_digest(temp, HASH_SIZE, temp2);
+// 	for (int i = 0, j = 31; i < HASH_SIZE; i++, j--) {
+// 		hash[i] = temp2[j];
+// 	}
+// }
 
 
 void check_pool() {
@@ -231,7 +232,7 @@ void check_pool() {
 			break;
 		case WAIT:
 			status.paused = true;
-			//send_message("OKAY", 0, NULL);
+			// TODO - maybe? send_message(OKAY);
 			break;
 		case TEST:
 			if (packet.message.header.payload_size >= sizeof(block_t))  {
@@ -271,80 +272,49 @@ boolean send_message(int type) {
 	return send_message(type, NULL, 0);
 }
 
-boolean send_message(int type, uint8_t *bytes, int bytes_size) {
+
+boolean send_message(int type, uint8_t *payload, int payload_size) {
 	const char* typestr = get_message_type(type);
-	int header_size = sizeof(message_header_t);
-
-	int pkcs7pad = 0;
-	if (bytes_size > 0) {
-		pkcs7pad = 4 - bytes_size % 4;
-	}
-	int payload_size = bytes_size + pkcs7pad;
-	int n = payload_size / 4;
-	int packet_size = header_size + payload_size;
-
+	print("SEND '"); print(typestr); print("' size="); println(payload_size);
 	memset(packet.bytes, 0, sizeof(packet_t));
-//	message_header_t m = packet2.header;
 	memcpy(packet.message.header.magic, MAGIC, 4);
 	memcpy(packet.message.header.version, VERSION, 4);
 	packet.message.header.sync = millis();
 	memcpy(packet.message.header.message_type, typestr, 4);
-	packet.message.header.payload_size = payload_size;
-
-	// Remove
-	print("SEND '"); print(typestr); print("' size="); print(bytes_size);
-	print(" pad="); print(pkcs7pad); print(" n="); println(n);
-
+	memcpy(packet.message.payload, payload, payload_size);
+	print_hex(packet.bytes, sizeof(message_header_t) + payload_size);
 	if (payload_size > 0) {
-		memcpy(packet.message.payload, bytes, bytes_size);
-		memset(&packet.message.payload[bytes_size], pkcs7pad, pkcs7pad);
-		print_hex(packet.bytes, packet_size);
-		xxtea_encode((uint32_t *) packet.message.payload, n, config.param.key);
-	} else {
-		print_hex(packet.bytes, packet_size);
+		packet.message.header.payload_size =
+			SMM.encrypt(packet.message.payload, sizeof(packet.message.payload), payload_size, config.param.key);
 	}
-	return send_packet(packet.bytes, packet_size);
-}
-
-boolean send_packet(uint8_t *bytes, size_t size) {
 	IPAddress remote = config.param.server;
 	udp.beginPacket(remote, config.param.port);
-	udp.write(bytes, size);
+	int packet_size = sizeof(message_header_t) + packet.message.header.payload_size;
+	print_hex(packet.bytes, packet_size);
+	udp.write(packet.bytes, packet_size);
 	return udp.endPacket() != 0;
 }
 
 
-
 int receive_message() {
-	int header_size = sizeof(message_header_t);
-	memset(packet.bytes, 0, sizeof(packet_t));
-	int packet_size = receive_packet(packet.bytes, sizeof(packet_t));
-	if (packet_size <= 0) return NONE;
-	if (packet_size < (int) sizeof(message_header_t)) {
+	int packet_size = udp.parsePacket();
+	if (packet_size == 0) return NONE;
+	if (packet_size < (int) sizeof(message_header_t) || packet_size > MAX_UDP_PAYLOAD) {
 		print("ERROR: packet size=");
 		println(packet_size);
-		print_hex(packet.bytes, packet_size);
+		udp.flush();
 		return ERROR;
 	}
-
+	memset(packet.bytes, 0, sizeof(packet_t));
+	udp.read(packet.bytes, packet_size);
 	int type = get_message_type(packet.message.header.message_type);
-	int payload_size = packet.message.header.payload_size;
-	int pkcs7pad = 0, n = 0;
-	if (payload_size > 0) {
-		int n = payload_size / 4;
-		xxtea_decode((uint32_t *) packet.message.payload, n, config.param.key);
-		pkcs7pad = packet.message.payload[packet_size - 1];
-		packet.message.header.payload_size = packet_size - pkcs7pad - header_size;
-	}
+	packet.message.header.payload_size =
+		SMM.decrypt(packet.message.payload, packet.message.header.payload_size, config.param.key);
 	print("RECV '");
 	print(get_message_type(type));
 	print("' size=");
-	print(packet.message.header.payload_size);
-	print(" pad=");
-	print(pkcs7pad);
-	print(" n=");
-	println(n);
-	print_hex(packet.bytes, packet_size); // remove
+	println(packet.message.header.payload_size);
+	print_hex(packet.bytes, sizeof(message_header_t) + packet.message.header.payload_size);
 	return type;
 }
 
@@ -391,20 +361,6 @@ int get_message_type(uint8_t *cmd) {
 	return NACK;
 }
 
-
-int receive_packet(uint8_t *buf, int size) {
-	int packet_size = udp.parsePacket();
-	if (packet_size == 0) {
-		return 0;
-	}
-	if (packet_size > MAX_UDP_PAYLOAD) {
-		udp.flush();
-		return 0;
-	}
-	memset(buf, 0, size);
-	udp.read(buf, packet_size);
-	return packet_size;
-}
 
 // CONDITIONAL PRINT
 

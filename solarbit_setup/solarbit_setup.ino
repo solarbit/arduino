@@ -1,7 +1,7 @@
 #include <EEPROM.h>
 #include <WiFi101.h>
 #include <WiFiUdp.h>
-#include <SolarBit.h>
+#include <SolarBit_SMM.h>
 
 #define MAX_UDP_PAYLOAD 1472
 #define UDP_PORT 21314 // "SB"
@@ -35,6 +35,24 @@ void setup() {
 	Serial.println("See: https://www.solarbit.cc");
 	Serial.println("----------------------------");
 	Serial.println("Performing hardware checks...");
+
+	Serial.print("  SolarBit shield: ");
+	if (SMM.status() == SMM_NO_SHIELD) {
+	  Serial.println("NOT PRESENT");
+	  return; // don't continue
+	}
+	Serial.println("DETECTED");
+    String sfv = SMM.firmwareVersion();
+	Serial.print("  SolarBit firmware version: ");
+	Serial.println(sfv);
+    if (sfv != SMM_FIRMWARE_REQUIRED) {
+      Serial.println("  SolarBit Status: NOT PASSED");
+      Serial.println("   - The firmware version on the shield do not match the");
+      Serial.println("     version required by the library, you may experience");
+      Serial.println("     issues or failures.");
+	  return;
+    }
+
 	Serial.print("  WiFi101 shield: ");
 	if (WiFi.status() == WL_NO_SHIELD) {
 	  Serial.println("NOT PRESENT");

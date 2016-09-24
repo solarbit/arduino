@@ -1,24 +1,23 @@
 // Solar Mining Module Prototype A
 // https://www.solarbit.cc
 
+#ifndef SOLARBIT_H
+#define SOLARBIT_H
+
 #include <Arduino.h>
-#include "sha256.h"
-#include "xxtea.h"
 
-uint8_t MAGIC[] =  {'S', 'M', 'M', 0}; // Solar Mining Module "SMM"
-uint8_t VERSION[] = {0, 3, 0, 'A'}; // 32 bit of www.semver.org
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define UDP_PORT 21314 // "SB" as a 16-bit big-endian integer
+#define UDP_PORT 21314 // UTF-8 "SB" as a 16-bit NBO integer
 #define MAX_UDP_PAYLOAD 1472 // Reduce packet fragmentation: 1500 MTU - 20 IP hdr - 8 UDP hdr = 1472 bytes
-
-// #define MESSAGE_HEADER_SIZE 20
-#define MAX_PAYLOAD_SIZE 1452
 
 #define HASH_SIZE 32 // SHA-256
 #define BLOCK_HEADER_SIZE 80 // Bitcoin Block Header Size in bytes
 #define ERROR -1
 
-uint8_t const MAX_HASH[] = {
+const uint8_t MAX_HASH[] = {
 	0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 }; // Almost completely guaranteed to be beaten on a first nonce attempt
@@ -27,27 +26,12 @@ uint8_t const MAX_HASH[] = {
 // SolarBit Mining Protocol Message Types
 enum MessageTypes {
 	NONE = 0,
-	HELO,
-	NODE,
-	POOL,
-	MINE,
-	DONE,
-	WAIT,
-	STAT,
-	WARN,
+	HELO, SYNC, NODE, POOL, MINE, DONE, WAIT, STAT, INFO, WARN,
 	// Maybes...
-	SYNC,
-	INFO,
-	STOP,
-	OKAY,
-	BEST,
-	TEST,
-	POST,
-	NACK,
-	PING
+	STOP, OKAY, BEST, TEST, POST, NACK, PING
 };
 
-// SolarBit Mining Protocol Message Header Data Structure
+// SolarBit Mining Protocol Message Data Structures
 typedef struct {
 	uint8_t magic[4];
 	uint8_t version[4];
@@ -55,13 +39,6 @@ typedef struct {
 	uint8_t message_type[4];
 	uint32_t payload_size;
 } message_header_t;
-
-/*
-typedef union {
-	message_header_t header;
-	uint8_t bytes[sizeof(message_header_t)];
-} message_t;
-*/
 
 typedef struct {
 	message_header_t header;
@@ -107,3 +84,10 @@ typedef union {
 	block_header_t header;
 	uint8_t bytes[sizeof(block_header_t)];
 } block_t;
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SOLARBIT_H
