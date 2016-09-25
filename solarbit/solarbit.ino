@@ -7,30 +7,17 @@
 #include <WiFiUdp.h>
 #include <SolarBit_SMM.h>
 
-#define MAX_COINBASE_SIZE 100
-
 typedef struct {
 	boolean tethered;
-	boolean valid;
-	boolean mined;
 	boolean paused;
-	uint8_t target[HASH_SIZE];
-	uint8_t current_hash[HASH_SIZE];
-	uint8_t best_hash[HASH_SIZE];
-	uint32_t start_nonce;
-	uint32_t best_nonce;
-	uint8_t coinbase[MAX_COINBASE_SIZE];
 	unsigned long boot_time;
-	unsigned long start_time;
-	unsigned long cumulative_time;
 } status_t;
 
-
-config_t config;
 status_t status;
-block_t block;
+config_t config;
 packet_t packet;
 WiFiUDP udp;
+
 
 void setup() {
 	status.tethered = is_tethered();
@@ -40,10 +27,13 @@ void setup() {
 	}
 	if (success) {
 		udp.begin(config.param.port);
+		int status = SMM.status();
 		println("SolarBit Mining Module Ready");
 		print("SMM Shield Status: ");
-		println(SMM.status());
+		println(status);
 		println();
+		print("SMM Status:\n ");
+		println(get_status_type(status));
 		send_message(HELO);
 		delay(500);
 	}
@@ -55,9 +45,12 @@ void setup() {
 void loop() {
 	if (WiFi.status() == WL_CONNECTED) {
 		check_pool();
-		boolean success = mine();
-		if (success) {
-			send_message(DONE, (uint8_t *) &block.header.nonce, 4);
+		int status = SMM.mine();
+		if (status == SMM_DONE) {
+			print("SMM Status:\n ");
+			println(get_status_type(status));
+			send_message(DONE); // TODO: add payload
+			SMM.end();
 		}
 	} else {
 		println("WiFi Disconnected");
@@ -70,35 +63,10 @@ void loop() {
 	}
 }
 
-
+// TODO: Maybe a shield LED?
 void do_indicator() {
-	// SPI used for WiFi takes awaly LED pin 13
+	// SPI used for WiFi takes away LED pin 13
 	return;
-}
-
-
-boolean mine() {
-	if (status.valid && !status.paused && !status.mined) {
-		SMM.doHash(&block, status.current_hash);
-		int compare = memcmp(status.current_hash, status.target, HASH_SIZE);
-		if (compare <= 0) {
-			status.mined = true;
-			status.paused = true;
-			status.cumulative_time += millis() - status.start_time;
-			memcpy(status.best_hash, status.current_hash, HASH_SIZE);
-			status.best_nonce = block.header.nonce;
-			return true;
-		} else {
-			int compare2 = memcmp(status.current_hash, status.best_hash, HASH_SIZE);
-			if (compare2 <= 0) {
-				memcpy(status.best_hash, status.current_hash, HASH_SIZE);
-				status.best_nonce = block.header.nonce;
-				send_best_result(); // TEMPORARY - REMOVE LATER
-			}
-			block.header.nonce += 1;
-		}
-	}
-	return false;
 }
 
 
@@ -114,6 +82,7 @@ boolean is_configuration_valid() {
 	return memcmp((const uint8_t*)config.param.magic, MAGIC, 4) == 0
 		&& memcmp((const uint8_t*)config.param.trailer, MAGIC, 4) == 0;
 }
+
 
 boolean connect_to_wifi() {
 	int status = WiFi.status();
@@ -142,41 +111,7 @@ boolean connect_to_mining_pool() {
 	return success > 0;
 }
 
-
-void load_block(uint8_t *bytes) {
-	status.valid = false;
-	for (int i = 0; i < BLOCK_HEADER_SIZE; i++) {
-		block.bytes[i] = bytes[i];
-	}
-	if (block.header.version > 0) {
-		status.valid = true;
-	}
-	status.valid = set_target(block.header.bits, status.target);
-	memcpy(status.current_hash, MAX_HASH, HASH_SIZE);
-	memcpy(status.best_hash, MAX_HASH, HASH_SIZE);
-	status.start_time = 0;
-	status.cumulative_time = 0;
-	status.start_nonce = block.header.nonce;
-	status.mined = false;
-	status.paused = true;
-}
-
-
-boolean set_target(uint32_t bits, uint8_t *target) {
-	memset(target, 0, HASH_SIZE);
-	uint32_t mantissa = bits & 0x00FFFFFF;
-	uint8_t exponent = bits >> 24 & 0x1F;
-	if (exponent > 3) {
-		target[32 - exponent] = mantissa >> 16 & 0xFF;
-		target[33 - exponent] = mantissa >> 8 & 0xFF;
-		target[34 - exponent] = mantissa & 0xFF;
-		return true;
-	} else {
-		return false;
-	}
-}
-
-
+/* DO NOT DELETE - MOVE!
 double get_hashrate() {
 	double hashes = (block.header.nonce - status.start_nonce) / 1000.0;
 	if (status.paused) {
@@ -189,18 +124,7 @@ double get_hashrate() {
 		return hashes / ((millis() - status.start_time + status.cumulative_time) / 1000.0);
 	}
 }
-
-
-// void do_hash(block_t *block, uint8_t *hash) {
-// 	uint8_t temp[HASH_SIZE];
-// 	sha256_digest(block->bytes, sizeof(block_t), temp);
-// 	uint8_t temp2[HASH_SIZE];
-// 	sha256_digest(temp, HASH_SIZE, temp2);
-// 	for (int i = 0, j = 31; i < HASH_SIZE; i++, j--) {
-// 		hash[i] = temp2[j];
-// 	}
-// }
-
+*/
 
 void check_pool() {
 	int cmd = receive_message();
@@ -214,44 +138,61 @@ void check_pool() {
 			status.boot_time = packet.message.header.sync - millis();
 			send_message(NODE, config.param.address, strlen((char *)config.param.address));
 			break;
-		case POOL:
-			if (packet.message.header.payload_size <= MAX_COINBASE_SIZE) {
-				memset(status.coinbase, 0, MAX_COINBASE_SIZE);
-				memcpy(status.coinbase, packet.message.payload, packet.message.header.payload_size);
-				send_message(OKAY);
-			} else {
-				send_message(NACK, (uint8_t *)&packet.message.header.sync, 4);
+		case POOL: {
+				uint8_t *coinbase = (uint8_t *)&packet.message.payload;
+				uint8_t length = packet.message.header.payload_size;
+
+				println("Received COINBASE from Pool");
+				print_hex(coinbase, length);
+
+				int status = SMM.begin(coinbase, length);
+				if (status == SMM_READY) {
+					send_message(OKAY);
+				} else {
+					send_message(NACK, (uint8_t *)&packet.message.header.sync, 4);
+				}
+
+				print("SMM Status:\n ");
+				println(get_status_type(status));
 			}
 			break;
 		case STAT:
-			send_message(INFO, (uint8_t *)&status, sizeof(status_t));
+			block_t report;
+			SMM.report(report.bytes, sizeof(block_t));
+			send_message(INFO, report.bytes, sizeof(block_t));
 			break;
-		case MINE:
-			// TODO - NEED COINBASE SPEC, BLOCK HEIGHT, MERKLE PATH...
-			send_message(NACK);
+		case MINE: {
+				int offset = sizeof(message_header_t);
+				uint32_t *block_height = (uint32_t *)&packet.bytes[offset];
+				offset += sizeof(uint32_t);
+				block_t *block = (block_t *)&packet.bytes[offset];
+				offset += sizeof(block_t);
+				uint8_t *path_length = (uint8_t *)&packet.bytes[offset];
+				offset += sizeof(uint8_t);
+				uint8_t *merkle_path_bytes = &packet.bytes[offset];
+				int status = SMM.init(*block_height, block, *path_length, merkle_path_bytes);
+				if (status != SMM_MINING) {
+					send_message(NACK);
+				}
+
+				println("Mining Payload");
+				print(" height=");
+				print(*block_height);
+				print(" version=");
+				print(block->header.version);
+				print(" pathlength=");
+				println(*path_length);
+				print_hex(merkle_path_bytes, *path_length * HASH_SIZE);
+				print("SMM Status:\n ");
+				println(get_status_type(status));
+			}
 			break;
 		case WAIT:
 			status.paused = true;
 			// TODO - maybe? send_message(OKAY);
 			break;
 		case TEST:
-			if (packet.message.header.payload_size >= sizeof(block_t))  {
-				memcpy(block.bytes, packet.message.payload, sizeof(block_t));
-				status.valid = false;
-				if (block.header.version > 0) {
-					status.valid = true;
-				}
-				status.valid = set_target(block.header.bits, status.target);
-				memcpy(status.current_hash, MAX_HASH, HASH_SIZE);
-				memcpy(status.best_hash, MAX_HASH, HASH_SIZE);
-				status.start_time = 0;
-				status.cumulative_time = 0;
-				status.start_nonce = block.header.nonce;
-				status.mined = false;
-				status.paused = false;
-			} else {
-				send_message(NACK);
-			}
+			send_message(NACK);
 			break;
 		case ERROR:
 			send_message(NACK);
@@ -262,41 +203,42 @@ void check_pool() {
 }
 
 
-// TODO: It's a start...
-void send_best_result() {
-	send_message(BEST, (uint8_t *)&status.best_nonce, sizeof(uint32_t));
-}
-
-
 boolean send_message(int type) {
 	return send_message(type, NULL, 0);
 }
 
 
 boolean send_message(int type, uint8_t *payload, int payload_size) {
-	const char* typestr = get_message_type(type);
-	print("SEND '"); print(typestr); print("' size="); println(payload_size);
 	memset(packet.bytes, 0, sizeof(packet_t));
+	const char* typestr = get_message_type(type);
 	memcpy(packet.message.header.magic, MAGIC, 4);
 	memcpy(packet.message.header.version, VERSION, 4);
 	packet.message.header.sync = millis();
 	memcpy(packet.message.header.message_type, typestr, 4);
 	memcpy(packet.message.payload, payload, payload_size);
-	print_hex(packet.bytes, sizeof(message_header_t) + payload_size);
 	if (payload_size > 0) {
 		packet.message.header.payload_size =
 			SMM.encrypt(packet.message.payload, sizeof(packet.message.payload), payload_size, config.param.key);
 	}
+
+	print("SEND '");
+	print(typestr);
+	print("' payload=");
+	print(payload_size);
+	print(" pad=");
+	println(payload_size > 0 ? 4 - (payload_size % 4) : 0);
+	print_hex(packet.bytes, sizeof(message_header_t) + payload_size);
+
 	IPAddress remote = config.param.server;
 	udp.beginPacket(remote, config.param.port);
 	int packet_size = sizeof(message_header_t) + packet.message.header.payload_size;
-	print_hex(packet.bytes, packet_size);
 	udp.write(packet.bytes, packet_size);
 	return udp.endPacket() != 0;
 }
 
 
 int receive_message() {
+	memset(packet.bytes, 0, sizeof(packet_t));
 	int packet_size = udp.parsePacket();
 	if (packet_size == 0) return NONE;
 	if (packet_size < (int) sizeof(message_header_t) || packet_size > MAX_UDP_PAYLOAD) {
@@ -305,16 +247,17 @@ int receive_message() {
 		udp.flush();
 		return ERROR;
 	}
-	memset(packet.bytes, 0, sizeof(packet_t));
 	udp.read(packet.bytes, packet_size);
 	int type = get_message_type(packet.message.header.message_type);
 	packet.message.header.payload_size =
 		SMM.decrypt(packet.message.payload, packet.message.header.payload_size, config.param.key);
+
 	print("RECV '");
 	print(get_message_type(type));
 	print("' size=");
 	println(packet.message.header.payload_size);
 	print_hex(packet.bytes, sizeof(message_header_t) + packet.message.header.payload_size);
+
 	return type;
 }
 
@@ -361,6 +304,19 @@ int get_message_type(uint8_t *cmd) {
 	return NACK;
 }
 
+
+const char *get_status_type(int type) {
+	switch(type) {
+		case SMM_NO_SHIELD: return "SMM_NO_SHIELD";
+		case SMM_IDLE: return "SMM_IDLE";
+		case SMM_READY: return "SMM_READY";
+		case SMM_MINING: return "SMM_MINING";
+		case SMM_DONE: return "SMM_DONE";
+		case SMM_FAIL: return "SMM_FAIL";
+		case SMM_ERROR: return "SMM_ERROR";
+		default: return "UNKNOWN";
+	}
+}
 
 // CONDITIONAL PRINT
 

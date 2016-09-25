@@ -3,5 +3,6 @@ morse
 WiFiCheck
 eeprom_check
 xxtea_test
+merkle_path_check
 /libraries/*
 !/libraries/SolarBit-SMMA

@@ -38,11 +38,12 @@ void setup() {
 
 	Serial.print("  SolarBit shield: ");
 	if (SMM.status() == SMM_NO_SHIELD) {
-	  Serial.println("NOT PRESENT");
-	  return; // don't continue
+		Serial.println("EMULATED");
+	} else {
+		Serial.println("DETECTED");
 	}
-	Serial.println("DETECTED");
-    String sfv = SMM.firmwareVersion();
+
+	String sfv = SMM.firmwareVersion();
 	Serial.print("  SolarBit firmware version: ");
 	Serial.println(sfv);
     if (sfv != SMM_FIRMWARE_REQUIRED) {
@@ -271,7 +272,7 @@ void print_configuration() {
 		}
 		masked[len] = 0;
 		Serial.println(masked);
-		Serial.print("  Pool Server: smm://");
+		Serial.print("  Pool Server: sbmp://");
 		print_server_address();
 		Serial.print("\n  Address: ");
 		Serial.print((char *)config.param.address);
