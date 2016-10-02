@@ -13,6 +13,7 @@ typedef struct {
 	unsigned long boot_time;
 } status_t;
 
+uint32_t best = 0;
 status_t status;
 config_t config;
 packet_t packet;
@@ -49,8 +50,14 @@ void loop() {
 		if (status == SMM_DONE) {
 			print("SMM Status:\n ");
 			println(get_status_type(status));
-			send_message(DONE); // TODO: add payload
+			uint32_t final = SMM.best();
+			send_message(DONE, (uint8_t *)&final, 4); // TODO: fix payload
 			SMM.end();
+		} else {
+			if (best < SMM.best()) {
+				best = SMM.best();
+				send_message(INFO, (uint8_t *)&best, 4);
+			}
 		}
 	} else {
 		println("WiFi Disconnected");
@@ -62,6 +69,7 @@ void loop() {
 		println("WiFi Reconnected");
 	}
 }
+
 
 // TODO: Maybe a shield LED?
 void do_indicator() {
@@ -111,33 +119,22 @@ boolean connect_to_mining_pool() {
 	return success > 0;
 }
 
-/* DO NOT DELETE - MOVE!
-double get_hashrate() {
-	double hashes = (block.header.nonce - status.start_nonce) / 1000.0;
-	if (status.paused) {
-		if (status.cumulative_time > 0) {
-			return hashes / (status.cumulative_time / 1000.0);
-		} else {
-			return 0.0;
-		}
-	} else {
-		return hashes / ((millis() - status.start_time + status.cumulative_time) / 1000.0);
-	}
-}
-*/
 
 void check_pool() {
-	int cmd = receive_message();
-	switch (cmd) {
+	int type = receive_message();
+	switch (type) {
 		case NONE:
 			break;
+
 		case PING:
 			send_message(HELO);
 			break;
+
 		case SYNC:
 			status.boot_time = packet.message.header.sync - millis();
 			send_message(NODE, config.param.address, strlen((char *)config.param.address));
 			break;
+
 		case POOL: {
 				uint8_t *coinbase = (uint8_t *)&packet.message.payload;
 				uint8_t length = packet.message.header.payload_size;
@@ -156,11 +153,13 @@ void check_pool() {
 				println(get_status_type(status));
 			}
 			break;
+
 		case STAT:
 			block_t report;
 			SMM.report(report.bytes, sizeof(block_t));
 			send_message(INFO, report.bytes, sizeof(block_t));
 			break;
+
 		case MINE: {
 				int offset = sizeof(message_header_t);
 				uint32_t *block_height = (uint32_t *)&packet.bytes[offset];
@@ -170,6 +169,7 @@ void check_pool() {
 				uint8_t *path_length = (uint8_t *)&packet.bytes[offset];
 				offset += sizeof(uint8_t);
 				uint8_t *merkle_path_bytes = &packet.bytes[offset];
+
 				int status = SMM.init(*block_height, block, *path_length, merkle_path_bytes);
 				if (status != SMM_MINING) {
 					send_message(NACK);
@@ -187,16 +187,16 @@ void check_pool() {
 				println(get_status_type(status));
 			}
 			break;
+
 		case WAIT:
 			status.paused = true;
 			// TODO - maybe? send_message(OKAY);
 			break;
-		case TEST:
-			send_message(NACK);
-			break;
+
 		case ERROR:
 			send_message(NACK);
 			break;
+
 		default:
 			break;
 	}
@@ -267,39 +267,38 @@ const char *get_message_type(int type) {
 		case PING: return "PING";
 		case HELO: return "HELO";
 		case SYNC: return "SYNC";
+
 		case NODE: return "NODE";
 		case POOL: return "POOL";
+		case OKAY: return "OKAY";
+
 		case MINE: return "MINE";
 		case DONE: return "DONE";
 		case WAIT: return "WAIT";
-		case STAT: return "STAT";
 
-		case TEST: return "TEST";
+		case STAT: return "STAT";
 		case INFO: return "INFO";
-		case BEST: return "BEST";
-		case STOP: return "STOP";
-		case OKAY: return "OKAY";
 
 		default: return "NACK";
 	}
 }
 
 
-int get_message_type(uint8_t *cmd) {
+MessageType get_message_type(uint8_t *cmd) {
 	if (strncmp("PING", (char *)cmd, 4) == 0) return PING;
 	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
 	if (strncmp("SYNC", (char *)cmd, 4) == 0) return SYNC;
+
 	if (strncmp("NODE", (char *)cmd, 4) == 0) return NODE;
 	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
+	if (strncmp("OKAY", (char *)cmd, 4) == 0) return OKAY;
+
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
 	if (strncmp("DONE", (char *)cmd, 4) == 0) return DONE;
 	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
-	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 
-	if (strncmp("OKAY", (char *)cmd, 4) == 0) return OKAY;
+	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 	if (strncmp("INFO", (char *)cmd, 4) == 0) return INFO;
-	if (strncmp("STOP", (char *)cmd, 4) == 0) return STOP;
-	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
 
 	return NACK;
 }
@@ -313,12 +312,12 @@ const char *get_status_type(int type) {
 		case SMM_MINING: return "SMM_MINING";
 		case SMM_DONE: return "SMM_DONE";
 		case SMM_FAIL: return "SMM_FAIL";
-		case SMM_ERROR: return "SMM_ERROR";
-		default: return "UNKNOWN";
+		case SMM_INVALID: return "SMM_INVALID";
+		default: return "SMM_UNKNOWN";
 	}
 }
 
-// CONDITIONAL PRINT
+// CONDITIONAL PRINTING
 
 boolean is_tethered() {
 	Serial.begin(9600);

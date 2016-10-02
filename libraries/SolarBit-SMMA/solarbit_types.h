@@ -6,10 +6,6 @@
 
 #include <Arduino.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #define UDP_PORT 21314 // UTF-8 "SB" as a 16-bit NBO integer
 #define MAX_UDP_PAYLOAD 1472 // Reduce packet fragmentation: 1500 MTU - 20 IP hdr - 8 UDP hdr = 1472 bytes
 
@@ -24,11 +20,13 @@ const uint8_t MAX_HASH[] = {
 
 
 // SolarBit Mining Protocol Message Types
-enum MessageTypes {
+enum MessageType {
+	NACK = 255,
 	NONE = 0,
-	HELO, SYNC, NODE, POOL, MINE, DONE, WAIT, STAT, INFO, WARN,
-	// Maybes...
-	STOP, OKAY, BEST, TEST, POST, NACK, PING
+	PING, HELO, SYNC,
+	NODE, POOL, OKAY,
+	MINE, DONE, WAIT,
+	STAT, INFO, WARN,
 };
 
 // SolarBit Mining Protocol Message Data Structures
@@ -75,7 +73,7 @@ typedef struct {
 	uint32_t version;
 	uint8_t previous_block[HASH_SIZE];
 	uint8_t merkle_root[HASH_SIZE];
-	uint32_t time;
+	uint32_t timestamp;
 	uint32_t bits;
 	uint32_t nonce;
 } block_header_t;
@@ -85,9 +83,5 @@ typedef union {
 	uint8_t bytes[sizeof(block_header_t)];
 } block_t;
 
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // SOLARBIT_H
