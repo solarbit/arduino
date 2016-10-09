@@ -58,18 +58,21 @@ public:
 	const char* firmwareVersion();
 	uint8_t mode();
 	uint8_t status();
-	int report(uint8_t *buf, int size); // TODO: IMPROVE
+	int report(report_t *report);
 
-//  uint8_t begin();
+// NEW API
+	uint8_t begin();
+	uint8_t init(uint32_t block_height, block_t *block_header);
+
+// OLD API
 //	uint8_t begin(smm_mode_t mode);
 	uint8_t begin(uint8_t *coinbase, size_t len);
 //	uint8_t setCoinbase(uint8_t *coinbase, size_t len);
 	uint8_t init(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes);
 //	uint8_t setBlock(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes);
+
 	uint8_t mine();
 	uint8_t mine(int cycles);
-	uint32_t best(); // TODO:REMOVE
-	void end();
 
 // TODO: Move to a separate class?
 	int encrypt(uint8_t *bytes, int size, int payload_size, uint32_t *key);

@@ -28,8 +28,30 @@ uint8_t SMMClass::mode() {
 	return _mode;
 }
 
+uint8_t SMMClass::begin() {
+	memset(&_work, 0, sizeof(smm_work_t));
+	memset(&_work.best_hash, 0xFF, HASH_SIZE);
+	_status = SMM_READY;
+	return _status;
+}
+
+uint8_t SMMClass::init(uint32_t block_height, block_t *block_header) {
+	memset(&_work, 0, sizeof(smm_work_t));
+	memset(&_work.best_hash, 0xFF, HASH_SIZE);
+	_status = SMM_IDLE;
+	_work.height = block_height;
+	memcpy(_work.block.bytes, block_header, sizeof(block_t));
+	_work.starting_nonce = _work.block.header.nonce;
+	_status = set_target(_work.block.header.bits, _work.target);
+	if (_status == SMM_INVALID) {
+		return _status;
+	}
+	_status = SMM_MINING;
+	return _status;
+}
 
 uint8_t SMMClass::begin(uint8_t *coinbase, size_t len) {
+	begin();
 	if (len > MAX_COINBASE_SIZE) {
 		return SMM_INVALID;
 	}
@@ -42,18 +64,22 @@ uint8_t SMMClass::begin(uint8_t *coinbase, size_t len) {
 
 uint8_t SMMClass::init(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes) {
 	_status = SMM_IDLE;
+	_work.height = block_height;
 	_status = update_coinbase(block_height);
 	if (_status == SMM_INVALID) {
 		return _status;
 	}
+	_work.nonce2 = 0;
 	set_merkle_path(path_length, path_bytes);
 	memcpy(_work.block.bytes, block_header, sizeof(block_t));
-	_work.starting_nonce = _work.block.header.nonce;
 	update_merkle_root();
 	_status = set_target(_work.block.header.bits, _work.target);
 	if (_status == SMM_INVALID) {
 		return _status;
 	}
+	memcpy(_work.best_hash, MAX_HASH, HASH_SIZE);
+	_work.best_nonce = 0;
+	_work.starting_nonce = _work.block.header.nonce;
 	_work.hash_time = 0;
 	_status = SMM_MINING;
 	return _status;
@@ -130,23 +156,18 @@ uint8_t SMMClass::mine(int cycles) {
 	return _status;
 }
 
-uint32_t SMMClass::best() {
-	return _work.best_nonce;
+
+int SMMClass::report(report_t *report) {
+	report->value.mode = _mode;
+	report->value.status = _status;
+	report->value.height = _work.height;
+	report->value.nonce = _work.best_nonce;
+	report->value.nonce2 = _work.nonce2;
+	memcpy(report->value.best_hash, _work.best_hash, HASH_SIZE);
+	report->value.hash_time = _work.hash_time;
+	report->value.hash_rate = hashrate();
+	return sizeof(report_t);
 }
-
-void SMMClass::end() {
-	_status = SMM_IDLE;
-}
-
-
-int SMMClass::report(uint8_t *buf, int size) {
-	if (size >= (int)sizeof(block_t)) {
-		memcpy(buf, _work.block.bytes, sizeof(block_t));
-		return sizeof(block_t);
-	}
-	return 0;
-}
-
 
 smm_status_t SMMClass::set_target(uint32_t bits, uint8_t *target) {
 	uint32_t mantissa = bits & 0x00FFFFFF;
@@ -161,7 +182,6 @@ smm_status_t SMMClass::set_target(uint32_t bits, uint8_t *target) {
 	return _status;
 }
 
-
 void SMMClass::dhash(uint8_t *input, int size, uint8_t *hash) {
 	uint8_t temp[HASH_SIZE];
 	sha256_digest(input, size, temp);
@@ -172,8 +192,8 @@ void SMMClass::dhash(uint8_t *input, int size, uint8_t *hash) {
 	}
 }
 
-
 double SMMClass::hashrate() {
+	if (_work.hash_time <= 0) return 0.0;
 	uint64_t num_hashes = _work.nonce2 * UINT32_MAX + _work.block.header.nonce - _work.starting_nonce;
 	double seconds = _work.hash_time / 1000.0;
 	return num_hashes / seconds;

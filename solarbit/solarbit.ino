@@ -13,10 +13,10 @@ typedef struct {
 	unsigned long boot_time;
 } status_t;
 
-uint32_t best = 0;
 status_t status;
 config_t config;
 packet_t packet;
+report_t report;
 WiFiUDP udp;
 
 
@@ -38,7 +38,13 @@ void setup() {
 		send_message(HELO);
 		delay(500);
 	}
-	status.paused = true;
+
+	print("Sizes -> ul: ");
+	print(sizeof(unsigned long));
+	print(" double: ");
+	println(sizeof(double));
+
+	status.paused = false;
 }
 
 
@@ -50,14 +56,8 @@ void loop() {
 		if (status == SMM_DONE) {
 			print("SMM Status:\n ");
 			println(get_status_type(status));
-			uint32_t final = SMM.best();
-			send_message(DONE, (uint8_t *)&final, 4); // TODO: fix payload
-			SMM.end();
-		} else {
-			if (best < SMM.best()) {
-				best = SMM.best();
-				send_message(INFO, (uint8_t *)&best, 4);
-			}
+			SMM.report(&report);
+			send_message(INFO, report.bytes, sizeof(report_t));
 		}
 	} else {
 		println("WiFi Disconnected");
@@ -131,7 +131,7 @@ void check_pool() {
 			break;
 
 		case SYNC:
-			status.boot_time = packet.message.header.sync - millis();
+			status.boot_time = packet.message.header.sync - (millis() / 1000);
 			send_message(NODE, config.param.address, strlen((char *)config.param.address));
 			break;
 
@@ -155,36 +155,53 @@ void check_pool() {
 			break;
 
 		case STAT:
-			block_t report;
-			SMM.report(report.bytes, sizeof(block_t));
-			send_message(INFO, report.bytes, sizeof(block_t));
+			SMM.report(&report);
+			send_message(INFO, report.bytes, sizeof(report_t));
 			break;
 
-		case MINE: {
-				int offset = sizeof(message_header_t);
-				uint32_t *block_height = (uint32_t *)&packet.bytes[offset];
-				offset += sizeof(uint32_t);
-				block_t *block = (block_t *)&packet.bytes[offset];
-				offset += sizeof(block_t);
-				uint8_t *path_length = (uint8_t *)&packet.bytes[offset];
-				offset += sizeof(uint8_t);
-				uint8_t *merkle_path_bytes = &packet.bytes[offset];
-
-				int status = SMM.init(*block_height, block, *path_length, merkle_path_bytes);
-				if (status != SMM_MINING) {
-					send_message(NACK);
+		case MINE:
+			{
+				if (packet.message.header.payload_size == 0) {
+					status.paused = false;
+					return;
 				}
+				// Preserve payload
+				packet_t data;
+				memcpy(data.bytes, packet.bytes, sizeof(packet_t));
 
-				println("Mining Payload");
-				print(" height=");
-				print(*block_height);
-				print(" version=");
-				print(block->header.version);
-				print(" pathlength=");
-				println(*path_length);
-				print_hex(merkle_path_bytes, *path_length * HASH_SIZE);
+				// Send last best attempt
+				report.value.tethered = status.tethered;
+				report.value.paused = status.paused;
+
+				SMM.report(&report);
+				send_message(INFO, report.bytes, sizeof(report_t));
+
+				print("For BLOCK ");
+				print(report.value.height);
+				print(" hashrate was ");
+				println(report.value.hash_rate);
+
+				int offset = sizeof(message_header_t);
+				uint32_t *block_height = (uint32_t *)&data.bytes[offset];
+				offset += sizeof(uint32_t);
+				block_t *block = (block_t *)&data.bytes[offset];
+				offset += sizeof(block_t);
+				uint8_t *path_length = (uint8_t *)&data.bytes[offset];
+				offset += sizeof(uint8_t);
+				uint8_t *merkle_path_bytes = &data.bytes[offset];
+
+				int smm_status = SMM.init(*block_height, block, *path_length, merkle_path_bytes);
+
 				print("SMM Status:\n ");
-				println(get_status_type(status));
+				print(get_status_type(smm_status));
+				print(" height=");
+				println(*block_height);
+
+				if (smm_status != SMM_MINING) {
+					send_message(NACK);
+				} else {
+					status.paused = false;
+				}
 			}
 			break;
 

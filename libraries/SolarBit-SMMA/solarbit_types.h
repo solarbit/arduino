@@ -84,4 +84,24 @@ typedef union {
 } block_t;
 
 
+// Mining Report
+typedef struct {
+	uint8_t mode;
+	uint8_t status;
+	uint8_t tethered;
+	uint8_t paused;
+	uint32_t height;
+	uint32_t nonce;
+	uint32_t nonce2;
+	uint8_t best_hash[HASH_SIZE];
+	unsigned long hash_time;
+	double hash_rate;
+} report_value_t;
+
+typedef union {
+	report_value_t value;
+	uint8_t bytes[sizeof(report_value_t)];
+} report_t;
+
+
 #endif // SOLARBIT_H
