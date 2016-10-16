@@ -25,16 +25,16 @@ All messages have the same format. Each message has a 20-byte header, and an opt
 
 ## Miner Flags
 
-Bit|Mnemonic|Description
----|--------|-----------
-0x01|PAUSED|Module is in a paused state
-0x02|TETHERED|Module is tethered to another computer
-0x04|VALID|Module is in a valid mining state
-0x08|READY|Module is properly configured
-0x10|COMPACT|Module expects compact mining instructions
-0x20|BTC|Module is expecting to mine bitcoin
-0x40|HARDWARE|Module is using a hardware hash module
-0x80|SOLAR|Module is powered by the Sun
+Bit  | Mnemonic | Description
+---- | -------- | -----------
+0x01 | PAUSED   | Module is in a paused state
+0x02 | VALID    | Module is in a valid mining state
+0x04 | COMPACT  | Module expects compact mining instructions
+0x08 | READY    | Module is properly configured
+0x10 | TETHERED | Module is tethered to another computer
+0x20 | RESERVED | Reserved
+0x40 | HARDWARE | Module is using a hardware hash module (FPGA/ASIC)
+0x80 | SOLAR    | Module is powered by the Sun
 
 
 ## Handshake
