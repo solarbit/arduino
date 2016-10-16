@@ -495,10 +495,12 @@ int receive_packet(uint8_t *buf, int size) {
 
 int get_message_type(uint8_t *cmd) {
 	if (strncmp("PING", (char *)cmd, 4) == 0) return PING;
+
 	if (strncmp("HELO", (char *)cmd, 4) == 0) return HELO;
 	if (strncmp("SYNC", (char *)cmd, 4) == 0) return SYNC;
 	if (strncmp("NODE", (char *)cmd, 4) == 0) return NODE;
 	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
+
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
 	if (strncmp("DONE", (char *)cmd, 4) == 0) return DONE;
 	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
@@ -506,9 +508,8 @@ int get_message_type(uint8_t *cmd) {
 
 	if (strncmp("OKAY", (char *)cmd, 4) == 0) return OKAY;
 	if (strncmp("INFO", (char *)cmd, 4) == 0) return INFO;
-	if (strncmp("STOP", (char *)cmd, 4) == 0) return STOP;
-	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
-
+//	if (strncmp("STOP", (char *)cmd, 4) == 0) return STOP;
+//	if (strncmp("TEST", (char *)cmd, 4) == 0) return TEST;
 	return NACK;
 }
 

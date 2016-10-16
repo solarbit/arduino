@@ -23,10 +23,11 @@ const uint8_t MAX_HASH[] = {
 enum MessageType {
 	NACK = 255,
 	NONE = 0,
-	PING, HELO, SYNC,
-	NODE, POOL, OKAY,
-	MINE, DONE, WAIT,
-	STAT, INFO, WARN,
+	PING, WAIT,
+	HELO, SYNC, NODE, POOL,
+	MINE, LAST, DONE,
+	STAT, INFO,
+	OKAY
 };
 
 // SolarBit Mining Protocol Message Data Structures

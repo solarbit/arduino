@@ -1,5 +1,6 @@
 
-# Solar Mining Protocol - First shot
+# The Simple Solar Mining Protocol (SSMP)
+This protocol is provisional and will, no doubt, evolve during prototyping and review.
 
 ## Messages
 All messages have the same format. Each message has a 20-byte header, and an optional payload of up to 1452 bytes.
@@ -14,9 +15,9 @@ All messages have the same format. Each message has a 20-byte header, and an opt
 
 `VERSION` is a [semver](https://www.semver.org) version number in 4 bytes, e.g.: [1, 0, 0, 'A']
 
-`SYNC` is a 32 bit message number/identifier that is used to tie together request/response pairs.
+`SYNC` is a 32 bit message number/identifier that may be used to tie together request/response pairs.
 
-`TYPE` is the message type or "command". 4 bytes of ASCII characters for readability. There are 10 message types: `HELO`, `NODE`, `POOL`, `MINE`, `DONE`, `WAIT`, `STAT`, `INFO`, `OKAY`, `WARN`
+`TYPE` is the message type or "command". 4 bytes of ASCII characters for readability. There are 12 message types: `PING`, `HELO`, `SYNC`, `NODE`, `POOL`, `WAIT`, `MINE`, `LAST`, `DONE`, `STAT`, `INFO`, `NACK`
 
 `SIZE` is a 32 bit little-endian number holding the size of the subsequent payload in bytes.
 
@@ -24,35 +25,111 @@ All messages have the same format. Each message has a 20-byte header, and an opt
 
 ## Handshake
 ```c
-SMM                                    POOL
- |                                      |
- |--------------- HELO[] -------------->|
- |                                      |
- |<-------------- SYNC[] ---------------|
- |                                      |
- |---------- NODE[ADDRESS(40)] -------->|
- |                                      |
- |<--- POOL[COINBASE_TEMPLATE(256)] ----|
- |                                      |
- |--------------- WAIT[] -------------->|
- |                                      |
+COINBASE TEMPLATE:
++-----------+----------------+-----------+
+| HEIGHT(4) | SCRIPT(1..120) | NONCE2(4) |
++-----------+----------------+-----------+
+
+MINER ADDRESS:
++-----------------+
+| ADDRESS(32..40) |
++-----------------+
+
+```
+
+```c
+SMM                                   POOL
+ |                                     |
+ |<------------- PING[] ---------------|?
+ |                                     |
+ |-------------- HELO[] -------------->|
+ |                                     |
+ |<------------- SYNC[] ---------------|
+ |                                     |
+ |----------- NODE[ADDRESS] ---------->|
+ |                                     |
+ |<---------- POOL[TEMPLATE] ----------|
+ |                                     |
+ |-------------- WAIT[] -------------->|?
+ |                                     |
 ```
 
 ## Operation
+
 ```c
-<= MINE [BLOCK_HEIGHT(4), VERSION(4), PREV(32), TIME(4), BITS(4), PATH(32) * (1..N)]
-<= STOP []
-=> INFO [BLOCK_HEIGHT(4), NONCE(4), NONCE2(8)] // Previous attempt
-=> DONE [BLOCK_HEIGHT(4), NONCE(4), NONCE2(8)]
-<= OKAY []
+MINING INSTRUCTION:
++-----------+------------+----------+---------+---------+-----------+----------------+
+| HEIGHT(4) | VERSION(4) | PREV(32) | TIME(4) | BITS(4) | LENGTH(1) | PATH(32)[1..N] |
++-----------+------------+----------+---------+---------+-----------+----------------+
+
+MINING RESULT:
++-----------+---------+----------+-----------+
+| HEIGHT(4) | BITS(4) | NONCE(4) | NONCE2(4) |
++-----------+---------+----------+-----------+
+```
+
+```c
+SMM                                    POOL
+ |                                      |
+ |<--------- MINE[INSTRUCTION] ---------|
+ |                                      |
+ |------------ LAST[RESULT] ----------->|
+ |                                      |
+ |------------ DONE[RESULT] ----------->|?
+ |                                      |
+ |<-------------- WAIT[] ---------------|?
+ |                                      |
 ```
 
 ## Status
-```c
-<= STAT []
-=> INFO [BLOCK_HEIGHT(4), NONCE(4), NONCE2(8)] // Current attempt
-=> DONE [BLOCK_HEIGHT(4), NONCE(4), NONCE2(8)]
-=> WAIT []
 
-=> WARN [STRING]
+Bit|Mnemonic|Description
+-|-|-
+0x01|PAUSED|Module is in a paused state
+0x02|TETHERED|Module is tethered to another computer
+0x04|VALID|Module is in a valid mining state
+0x08|READY|Module is properly configured
+0x10|BTC|Module is expecting to mine bitcoin
+0x20|RESERVED|Leave this flag unset
+0x40|HARDWARE|Module is using a hardware hash module
+0x80|SOLAR|Module is powered by the Sun
+
+```c
+MODULE REPORT:
++----------+-----------+-----------+----------+-----------+
+| FLAGS(1) | STATUS(1) | HEIGHT(4) | NONCE(4) | NONCE2(4) |...
++----------+-----------+-----------+----------+-----------+
+   +----------+-------------+-------------+
+...| HASH(32) | HASHTIME(8) | HASHRATE(8) |
+   +----------+-------------+-------------+
+```
+
+```c
+SMM                                   POOL
+ |                                     |
+ |<------------- STAT[] ---------------|
+ |                                     |
+ |------------ INFO[REPORT] ---------->|
+ |                                     |
+```
+
+## Error
+
+```c
+NACK ERROR:
++---------+---------+---------+
+| TYPE(4) | SYNC(4) | CODE(8) |
++---------+---------+---------+
+```
+
+```c
+SMM                                   POOL
+ |                                     |
+ |----------- NACK[ERROR?] ----------->|
+ |                                     |
+
+SMM                                   POOL
+ |                                     |
+ |<---------- NACK[ERROR?] ------------|
+ |                                     |
 ```

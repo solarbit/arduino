@@ -1,4 +1,5 @@
 .DS_Store
+*.pdf
 morse
 WiFiCheck
 eeprom_check

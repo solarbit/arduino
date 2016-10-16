@@ -5,6 +5,7 @@
 #include <EEPROM.h>
 #include <WiFi101.h>
 #include <WiFiUdp.h>
+#include <CurieBLE.h>
 #include <SolarBit_SMM.h>
 
 typedef struct {
@@ -19,6 +20,9 @@ packet_t packet;
 report_t report;
 WiFiUDP udp;
 
+BLEPeripheral blePeripheral;
+BLEService smmService("a3c1622d-2670-1298-f31b-49a1a9ba6776");
+BLECharCharacteristic poolCharacteristic("fd0147e0-425e-a0a6-76ca-1977f08edd16", BLERead | BLEWrite);
 
 void setup() {
 	status.tethered = is_tethered();
@@ -35,6 +39,10 @@ void setup() {
 		println();
 		print("SMM Status:\n ");
 		println(get_status_type(status));
+		success = setup_bluetooth();
+		if (success) {
+			println("Bluetooth Enabled");
+		}
 		send_message(HELO);
 		delay(500);
 	}
@@ -44,12 +52,24 @@ void setup() {
 	print(" double: ");
 	println(sizeof(double));
 
+    blePeripheral.setAdvertisedServiceUuid(smmService.uuid());
+    blePeripheral.addAttribute(smmService);
+    blePeripheral.addAttribute(poolCharacteristic);
+    poolCharacteristic.setValue(3);
+	blePeripheral.setEventHandler(BLEConnected, blePeripheralConnectHandler);
+	blePeripheral.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
+	poolCharacteristic.setEventHandler(BLEWritten, poolCharacteristicWritten);
+	blePeripheral.setLocalName("SolarBit Miner");
+	blePeripheral.setDeviceName("SolarBit Miner");
+    blePeripheral.begin();
+
 	status.paused = false;
 }
 
 
 
 void loop() {
+	blePeripheral.poll();
 	if (WiFi.status() == WL_CONNECTED) {
 		check_pool();
 		int status = SMM.mine();
@@ -89,6 +109,20 @@ boolean load_configuration_from_eeprom() {
 boolean is_configuration_valid() {
 	return memcmp((const uint8_t*)config.param.magic, MAGIC, 4) == 0
 		&& memcmp((const uint8_t*)config.param.trailer, MAGIC, 4) == 0;
+}
+
+
+boolean setup_bluetooth() {
+	blePeripheral.setAdvertisedServiceUuid(smmService.uuid());
+	blePeripheral.addAttribute(smmService);
+	blePeripheral.addAttribute(poolCharacteristic);
+	poolCharacteristic.setValue(3);
+	blePeripheral.setEventHandler(BLEConnected, blePeripheralConnectHandler);
+	blePeripheral.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
+	poolCharacteristic.setEventHandler(BLEWritten, poolCharacteristicWritten);
+	blePeripheral.setLocalName("SolarBit Miner");
+	blePeripheral.setDeviceName("SolarBit Miner");
+	return blePeripheral.begin();
 }
 
 
@@ -255,9 +289,19 @@ boolean send_message(int type, uint8_t *payload, int payload_size) {
 
 
 int receive_message() {
-	memset(packet.bytes, 0, sizeof(packet_t));
 	int packet_size = udp.parsePacket();
 	if (packet_size == 0) return NONE;
+	IPAddress remote = udp.remoteIP();
+	IPAddress pool = config.param.server;
+	if (remote != pool) {
+		print("Remote: ");
+		print(remote);
+		print(" Expected: ");
+		println(pool);
+		udp.flush();
+		return NONE;
+	}
+	memset(packet.bytes, 0, sizeof(packet_t));
 	if (packet_size < (int) sizeof(message_header_t) || packet_size > MAX_UDP_PAYLOAD) {
 		print("ERROR: packet size=");
 		println(packet_size);
@@ -287,15 +331,16 @@ const char *get_message_type(int type) {
 
 		case NODE: return "NODE";
 		case POOL: return "POOL";
-		case OKAY: return "OKAY";
+		case WAIT: return "WAIT";
 
 		case MINE: return "MINE";
+		case LAST: return "LAST";
 		case DONE: return "DONE";
-		case WAIT: return "WAIT";
 
 		case STAT: return "STAT";
 		case INFO: return "INFO";
 
+		case OKAY: return "OKAY";
 		default: return "NACK";
 	}
 }
@@ -308,11 +353,11 @@ MessageType get_message_type(uint8_t *cmd) {
 
 	if (strncmp("NODE", (char *)cmd, 4) == 0) return NODE;
 	if (strncmp("POOL", (char *)cmd, 4) == 0) return POOL;
-	if (strncmp("OKAY", (char *)cmd, 4) == 0) return OKAY;
+	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
 
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
+	if (strncmp("LAST", (char *)cmd, 4) == 0) return LAST;
 	if (strncmp("DONE", (char *)cmd, 4) == 0) return DONE;
-	if (strncmp("WAIT", (char *)cmd, 4) == 0) return WAIT;
 
 	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
 	if (strncmp("INFO", (char *)cmd, 4) == 0) return INFO;
@@ -332,6 +377,25 @@ const char *get_status_type(int type) {
 		case SMM_INVALID: return "SMM_INVALID";
 		default: return "SMM_UNKNOWN";
 	}
+}
+
+// BLE EVENTS
+
+void blePeripheralConnectHandler(BLECentral& central) {
+	print("Connected event, central: ");
+	println(central.address());
+}
+
+void blePeripheralDisconnectHandler(BLECentral& central) {
+	print("Disconnected event, central: ");
+	println(central.address());
+}
+
+void poolCharacteristicWritten(BLECentral& central, BLECharacteristic& characteristic) {
+	print("Write event, central: ");
+	println(central.address());
+	print("Characteristic written: ");
+	println(poolCharacteristic.value());
 }
 
 // CONDITIONAL PRINTING

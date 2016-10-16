@@ -84,7 +84,7 @@ private:
 	smm_work_t _work;
 	uint8_t *_merkle_path[HASH_SIZE];
 
-	void dhash(uint8_t *bytes, int size, uint8_t *hash); // make private
+	void hash256(uint8_t *bytes, int size, uint8_t *hash); // make private
 	smm_status_t update_coinbase(uint32_t block_height);
 	void set_merkle_path(int path_length, uint8_t *path_bytes);
 	void update_merkle_root();

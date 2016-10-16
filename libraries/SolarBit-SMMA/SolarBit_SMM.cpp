@@ -3,12 +3,10 @@
 
 #include "SolarBit_SMM.h"
 
-
 SMMClass::SMMClass() {
 	_mode = SMM_EMULATED;
 	_status = SMM_IDLE;
 }
-
 
 const char* SMMClass::firmwareVersion() {
 	if (_mode == SMM_EMULATED) {
@@ -18,11 +16,9 @@ const char* SMMClass::firmwareVersion() {
 	}
 }
 
-
 uint8_t SMMClass::status() {
 	return _status;
 }
-
 
 uint8_t SMMClass::mode() {
 	return _mode;
@@ -61,7 +57,6 @@ uint8_t SMMClass::begin(uint8_t *coinbase, size_t len) {
 	return _status;
 }
 
-
 uint8_t SMMClass::init(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes) {
 	_status = SMM_IDLE;
 	_work.height = block_height;
@@ -77,14 +72,13 @@ uint8_t SMMClass::init(uint32_t block_height, block_t *block_header, int path_le
 	if (_status == SMM_INVALID) {
 		return _status;
 	}
-	memcpy(_work.best_hash, MAX_HASH, HASH_SIZE);
+	memset(&_work.best_hash, 0xFF, HASH_SIZE);
 	_work.best_nonce = 0;
 	_work.starting_nonce = _work.block.header.nonce;
 	_work.hash_time = 0;
 	_status = SMM_MINING;
 	return _status;
 }
-
 
 smm_status_t SMMClass::update_coinbase(uint32_t block_height) {
 	if (block_height != (block_height & 0x00FFFFFF)) {
@@ -101,7 +95,6 @@ smm_status_t SMMClass::update_coinbase(uint32_t block_height) {
 	return _status;
 }
 
-
 void SMMClass::set_merkle_path(int path_length, uint8_t *path_bytes) {
 	_work.merkle_path_length = path_length;
 	for (int i = 0, j = 0; i < path_length; i++, j += HASH_SIZE) {
@@ -109,19 +102,17 @@ void SMMClass::set_merkle_path(int path_length, uint8_t *path_bytes) {
 	}
 }
 
-
 void SMMClass::update_merkle_root() {
 	uint8_t hash[HASH_SIZE];
 	uint8_t next[HASH_SIZE * 2];
-	dhash(_work.coinbase, _work.coinbase_length, hash);
+	hash256(_work.coinbase, _work.coinbase_length, hash);
 	for (int i = 0; i < _work.merkle_path_length; i++) {
 		memcpy(next, hash, HASH_SIZE);
 		memcpy(&next[HASH_SIZE], _work.merkle_path[i], HASH_SIZE);
-		dhash(next, sizeof(next), hash);
+		hash256(next, sizeof(next), hash);
 	}
 	memcpy(_work.block.header.merkle_root, hash, HASH_SIZE);
 }
-
 
 uint8_t SMMClass::mine() {
 	return mine(1024); // 1KH chunk
@@ -132,7 +123,7 @@ uint8_t SMMClass::mine(int cycles) {
 	unsigned long start = millis();
 	for (int i = 0; i < cycles; i++) {
 		uint8_t hash[HASH_SIZE];
-		dhash(_work.block.bytes, sizeof(block_t), hash);
+		hash256(_work.block.bytes, sizeof(block_t), hash);
 		boolean mined = (memcmp(hash, _work.target, HASH_SIZE) <= 0);
 		if (mined) {
 			memcpy(_work.best_hash, hash, HASH_SIZE);
@@ -155,7 +146,6 @@ uint8_t SMMClass::mine(int cycles) {
 	_work.hash_time += (millis() - start);
 	return _status;
 }
-
 
 int SMMClass::report(report_t *report) {
 	report->value.mode = _mode;
@@ -182,7 +172,7 @@ smm_status_t SMMClass::set_target(uint32_t bits, uint8_t *target) {
 	return _status;
 }
 
-void SMMClass::dhash(uint8_t *input, int size, uint8_t *hash) {
+void SMMClass::hash256(uint8_t *input, int size, uint8_t *hash) {
 	uint8_t temp[HASH_SIZE];
 	sha256_digest(input, size, temp);
 	uint8_t temp2[HASH_SIZE];
@@ -199,7 +189,6 @@ double SMMClass::hashrate() {
 	return num_hashes / seconds;
 }
 
-
 int SMMClass::encrypt(uint8_t *bytes, int size, int payload_size, uint32_t *key) {
 	if (payload_size == 0) {
 		return 0;
@@ -215,7 +204,6 @@ int SMMClass::encrypt(uint8_t *bytes, int size, int payload_size, uint32_t *key)
 	return encrypted_size;
 }
 
-
 int SMMClass::decrypt(uint8_t *bytes, int size, uint32_t *key) {
 	if (size <= 0 || size % 4 != 0) {
 		return size;
@@ -225,6 +213,5 @@ int SMMClass::decrypt(uint8_t *bytes, int size, uint32_t *key) {
 	int pkcs7pad = bytes[size - 1];
 	return size - pkcs7pad;
 }
-
 
 SMMClass SMM;
