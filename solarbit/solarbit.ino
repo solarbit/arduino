@@ -46,23 +46,6 @@ void setup() {
 		send_message(HELO);
 		delay(500);
 	}
-
-	print("Sizes -> ul: ");
-	print(sizeof(unsigned long));
-	print(" double: ");
-	println(sizeof(double));
-
-    blePeripheral.setAdvertisedServiceUuid(smmService.uuid());
-    blePeripheral.addAttribute(smmService);
-    blePeripheral.addAttribute(poolCharacteristic);
-    poolCharacteristic.setValue(3);
-	blePeripheral.setEventHandler(BLEConnected, blePeripheralConnectHandler);
-	blePeripheral.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
-	poolCharacteristic.setEventHandler(BLEWritten, poolCharacteristicWritten);
-	blePeripheral.setLocalName("SolarBit Miner");
-	blePeripheral.setDeviceName("SolarBit Miner");
-    blePeripheral.begin();
-
 	status.paused = false;
 }
 
@@ -154,7 +137,7 @@ boolean connect_to_mining_pool() {
 }
 
 
-void check_pool() {
+void check_messages() {
 	int type = receive_message();
 	switch (type) {
 		case NONE:
@@ -301,13 +284,13 @@ int receive_message() {
 		udp.flush();
 		return NONE;
 	}
-	memset(packet.bytes, 0, sizeof(packet_t));
 	if (packet_size < (int) sizeof(message_header_t) || packet_size > MAX_UDP_PAYLOAD) {
 		print("ERROR: packet size=");
 		println(packet_size);
 		udp.flush();
 		return ERROR;
 	}
+	memset(packet.bytes, 0, sizeof(packet_t));
 	udp.read(packet.bytes, packet_size);
 	int type = get_message_type(packet.message.header.message_type);
 	packet.message.header.payload_size =
@@ -402,7 +385,7 @@ void poolCharacteristicWritten(BLECentral& central, BLECharacteristic& character
 
 boolean is_tethered() {
 	Serial.begin(9600);
-	int tries = 5;
+	int tries = 3;
 	while (tries > 0) {
 		if (Serial) {
 			return true;
