@@ -84,19 +84,6 @@ MINING RESULT:
 
 ## Status
 
-
-Bit|Mnemonic|Description
----|--------|-----------
-0x01|PAUSED|Module is in a paused state
-0x02|TETHERED|Module is tethered to another computer
-0x04|VALID|Module is in a valid mining state
-0x08|READY|Module is properly configured
-0x10|BTC|Module is expecting to mine bitcoin
-0x20|RESERVED|Leave this flag unset
-0x40|HARDWARE|Module is using a hardware hash module
-0x80|SOLAR|Module is powered by the Sun
-
-
 ```c
 SMM                                   POOL
  |                                     |
@@ -112,6 +99,20 @@ MODULE REPORT:
 | FLAGS(1) | STATUS(1) | HEIGHT(4) | NONCE(4) | NONCE2(4) | HASH(32) | HASHTIME(8) | HASHRATE(8) |
 +----------+-----------+-----------+----------+-----------+----------+-------------+-------------+
 ```
+
+
+Bit|Mnemonic|Description
+---|--------|-----------
+0x01|PAUSED|Module is in a paused state
+0x02|TETHERED|Module is tethered to another computer
+0x04|VALID|Module is in a valid mining state
+0x08|READY|Module is properly configured
+0x10|BTC|Module is expecting to mine bitcoin
+0x20|RESERVED|Leave this flag unset
+0x40|HARDWARE|Module is using a hardware hash module
+0x80|SOLAR|Module is powered by the Sun
+
+
 
 ## Error
 
