@@ -13,24 +13,32 @@
 #define BLOCK_HEADER_SIZE 80 // Bitcoin Block Header Size in bytes
 #define ERROR -1
 
-const uint8_t MAX_HASH[] = {
-	0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-}; // Almost completely guaranteed to be beaten on a first nonce attempt
-
-
 // SolarBit Mining Protocol Message Types
 enum MessageType {
 	NACK = 255,
 	NONE = 0,
-	PING, WAIT,
-	HELO, SYNC, NODE, POOL,
-	MINE, LAST, DONE,
+	PING,
+	HELO, SYNC,
+	NODE, POOL,
+	MINE, LAST, NEXT, DONE,
 	STAT, INFO,
-	OKAY
+	WAIT, // TODO: remove
+	OKAY // TODO: remove
 };
 
-// SolarBit Mining Protocol Message Data Structures
+
+// Miner Flags
+#define FLAG_PAUSED   0x01;
+#define FLAG_VALID    0x02;
+#define FLAG_COMPACT  0x04;
+#define FLAG_READY    0x08;
+#define FLAG_TETHERED 0x10;
+#define FLAG_RESERVED 0x20;
+#define FLAG_HARDWARE 0x40;
+#define FLAG_SOLAR    0x80;
+
+
+// Simple Solar Mining Protocol Message Data Structures
 typedef struct {
 	uint8_t magic[4];
 	uint8_t version[4];
@@ -83,6 +91,19 @@ typedef union {
 	block_header_t header;
 	uint8_t bytes[sizeof(block_header_t)];
 } block_t;
+
+
+typedef struct {
+	uint32_t height;
+	uint32_t bits;
+	uint32_t nonce;
+	uint32_t nonce2;
+} result_value_t;
+
+typedef union {
+	result_value_t value;
+	uint8_t bytes[sizeof(result_value_t)];
+} result_t;
 
 
 // Mining Report

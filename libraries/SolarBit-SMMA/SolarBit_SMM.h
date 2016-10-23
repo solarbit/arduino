@@ -58,24 +58,25 @@ public:
 	const char* firmwareVersion();
 	uint8_t mode();
 	uint8_t status();
-	int report(report_t *report);
 
 // NEW API
 	uint8_t begin();
-	uint8_t init(uint32_t block_height, block_t *block_header);
+	uint8_t task(uint32_t block_height, block_t *block_header);
 
 // OLD API
 //	uint8_t begin(smm_mode_t mode);
 	uint8_t begin(uint8_t *coinbase, size_t len);
 //	uint8_t setCoinbase(uint8_t *coinbase, size_t len);
-	uint8_t init(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes);
+	uint8_t task(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes);
 //	uint8_t setBlock(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes);
 
 	uint8_t mine();
 	uint8_t mine(int cycles);
+	void result(result_t *result);
+	int report(report_t *report);
 
 // TODO: Move to a separate class?
-	int encrypt(uint8_t *bytes, int size, int payload_size, uint32_t *key);
+	int encrypt(uint8_t *bytes, int size, uint32_t *key);
 	int decrypt(uint8_t *bytes, int size, uint32_t *key);
 
 private:
@@ -84,11 +85,12 @@ private:
 	smm_work_t _work;
 	uint8_t *_merkle_path[HASH_SIZE];
 
-	void hash256(uint8_t *bytes, int size, uint8_t *hash); // make private
+	void hash256(uint8_t *bytes, int size, uint8_t *hash);
 	smm_status_t update_coinbase(uint32_t block_height);
 	void set_merkle_path(int path_length, uint8_t *path_bytes);
 	void update_merkle_root();
 	smm_status_t set_target(uint32_t bits, uint8_t *target);
+	uint32_t get_bits(uint8_t *target);
 	double hashrate();
 };
 

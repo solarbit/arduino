@@ -6,11 +6,11 @@ The impressive 1.5 KH/sec on my Arduino 101 means that we only need another thou
 
 The `solarbit_setup` sketch checks your hardware setup and adds configuration to EEPROM for the SMM for the WiFi and Pool connections. You need to run it before you run the main `solarbit` sketch...
 
-The `solarbit` SMM now uses the WiFi101 shield instead of being tethered to the USB. Another small step towards plugging it into a solar panel..
+The `solarbit` SMM sketch now uses the WiFi101 shield instead of being tethered to the USB. Another small step towards plugging it into a solar panel..
 
 I suspect these sketches wouldn't be hard to port to an Uno and the original WiFi shield?
 
-Now taking a first stab at the [Protocol](./protocol.md)
+Now taking a first stab at the [Protocol](https://github.com/solarbit/pool/blob/master/protocol.md)
 
 Anyone know where to get ASICs? Anyone know how to make a shield for them?
 

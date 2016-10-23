@@ -2,6 +2,7 @@
 *.pdf
 morse
 WiFiCheck
+ble_check
 eeprom_check
 xxtea_test
 merkle_path_check

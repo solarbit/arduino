@@ -17,12 +17,13 @@ typedef struct {
 status_t status;
 config_t config;
 packet_t packet;
-report_t report;
-WiFiUDP udp;
 
 BLEPeripheral blePeripheral;
 BLEService smmService("a3c1622d-2670-1298-f31b-49a1a9ba6776");
 BLECharCharacteristic poolCharacteristic("fd0147e0-425e-a0a6-76ca-1977f08edd16", BLERead | BLEWrite);
+
+WiFiUDP udp;
+
 
 void setup() {
 	status.tethered = is_tethered();
@@ -50,17 +51,17 @@ void setup() {
 }
 
 
-
 void loop() {
 	blePeripheral.poll();
 	if (WiFi.status() == WL_CONNECTED) {
-		check_pool();
+		check_messages();
 		int status = SMM.mine();
 		if (status == SMM_DONE) {
 			print("SMM Status:\n ");
 			println(get_status_type(status));
-			SMM.report(&report);
-			send_message(INFO, report.bytes, sizeof(report_t));
+			result_t result;
+			SMM.result(&result);
+			send_message(DONE, result.bytes, sizeof(result_t));
 		}
 	} else {
 		println("WiFi Disconnected");
@@ -85,11 +86,6 @@ boolean load_configuration_from_eeprom() {
 	for (unsigned int i = 0; i < sizeof(config_t); i++) {
 		config.bytes[i] = EEPROM.read(i);
 	}
-	return is_configuration_valid();
-}
-
-
-boolean is_configuration_valid() {
 	return memcmp((const uint8_t*)config.param.magic, MAGIC, 4) == 0
 		&& memcmp((const uint8_t*)config.param.trailer, MAGIC, 4) == 0;
 }
@@ -148,11 +144,17 @@ void check_messages() {
 			break;
 
 		case SYNC:
-			status.boot_time = packet.message.header.sync - (millis() / 1000);
-			send_message(NODE, config.param.address, strlen((char *)config.param.address));
+			{
+				status.boot_time = packet.message.header.sync - (millis() / 1000);
+				int len = strlen((char *)config.param.address);
+				uint8_t payload[len + 1];
+				payload[0] = get_flags();
+				memcpy(&payload[1], config.param.address, len);
+				send_message(NODE, payload, len + 1);
+			}
 			break;
-
-		case POOL: {
+		case POOL:
+			{
 				uint8_t *coinbase = (uint8_t *)&packet.message.payload;
 				uint8_t length = packet.message.header.payload_size;
 
@@ -172,10 +174,12 @@ void check_messages() {
 			break;
 
 		case STAT:
-			SMM.report(&report);
-			send_message(INFO, report.bytes, sizeof(report_t));
+			{
+				report_t report;
+				SMM.report(&report);
+				send_message(INFO, report.bytes, sizeof(report_t));
+			}
 			break;
-
 		case MINE:
 			{
 				if (packet.message.header.payload_size == 0) {
@@ -187,16 +191,9 @@ void check_messages() {
 				memcpy(data.bytes, packet.bytes, sizeof(packet_t));
 
 				// Send last best attempt
-				report.value.tethered = status.tethered;
-				report.value.paused = status.paused;
-
-				SMM.report(&report);
-				send_message(INFO, report.bytes, sizeof(report_t));
-
-				print("For BLOCK ");
-				print(report.value.height);
-				print(" hashrate was ");
-				println(report.value.hash_rate);
+				result_t result;
+				SMM.result(&result);
+				send_message(LAST, result.bytes, sizeof(result_t));
 
 				int offset = sizeof(message_header_t);
 				uint32_t *block_height = (uint32_t *)&data.bytes[offset];
@@ -207,7 +204,7 @@ void check_messages() {
 				offset += sizeof(uint8_t);
 				uint8_t *merkle_path_bytes = &data.bytes[offset];
 
-				int smm_status = SMM.init(*block_height, block, *path_length, merkle_path_bytes);
+				int smm_status = SMM.task(*block_height, block, *path_length, merkle_path_bytes);
 
 				print("SMM Status:\n ");
 				print(get_status_type(smm_status));
@@ -252,7 +249,9 @@ boolean send_message(int type, uint8_t *payload, int payload_size) {
 	memcpy(packet.message.payload, payload, payload_size);
 	if (payload_size > 0) {
 		packet.message.header.payload_size =
-			SMM.encrypt(packet.message.payload, sizeof(packet.message.payload), payload_size, config.param.key);
+			SMM.encrypt(packet.message.payload, payload_size, config.param.key);
+	} else {
+		packet.message.header.payload_size = 0;
 	}
 
 	print("SEND '");
@@ -260,7 +259,7 @@ boolean send_message(int type, uint8_t *payload, int payload_size) {
 	print("' payload=");
 	print(payload_size);
 	print(" pad=");
-	println(payload_size > 0 ? 4 - (payload_size % 4) : 0);
+	println(packet.message.header.payload_size - payload_size);
 	print_hex(packet.bytes, sizeof(message_header_t) + payload_size);
 
 	IPAddress remote = config.param.server;
@@ -287,7 +286,7 @@ int receive_message() {
 	if (packet_size < (int) sizeof(message_header_t) || packet_size > MAX_UDP_PAYLOAD) {
 		print("ERROR: packet size=");
 		println(packet_size);
-		udp.flush();
+		udp.flush(); // TODO: Parse header and return proper error detail
 		return ERROR;
 	}
 	memset(packet.bytes, 0, sizeof(packet_t));
@@ -306,6 +305,19 @@ int receive_message() {
 }
 
 
+// TODO: avoid heuristic decisions
+uint8_t get_flags() {
+	uint8_t flags = 0;
+	if (status.paused) flags |= FLAG_PAUSED;
+	if (SMM.status() != SMM_INVALID) flags |= FLAG_VALID;
+	if (SMM.mode() == SMM_EMULATED) flags |= FLAG_COMPACT;
+	if (SMM.status() == SMM_READY) flags |= FLAG_READY;
+	if (status.tethered) flags |= FLAG_TETHERED;
+	if (SMM.mode() == SMM_HARDWARE) flags |= FLAG_HARDWARE;
+	return flags;
+}
+
+
 const char *get_message_type(int type) {
 	switch (type) {
 		case PING: return "PING";
@@ -314,16 +326,18 @@ const char *get_message_type(int type) {
 
 		case NODE: return "NODE";
 		case POOL: return "POOL";
-		case WAIT: return "WAIT";
+		case WAIT: return "WAIT"; // remove
 
 		case MINE: return "MINE";
 		case LAST: return "LAST";
+		case NEXT: return "NEXT";
 		case DONE: return "DONE";
 
 		case STAT: return "STAT";
 		case INFO: return "INFO";
 
-		case OKAY: return "OKAY";
+		case OKAY: return "OKAY"; // remove
+
 		default: return "NACK";
 	}
 }
@@ -340,6 +354,7 @@ MessageType get_message_type(uint8_t *cmd) {
 
 	if (strncmp("MINE", (char *)cmd, 4) == 0) return MINE;
 	if (strncmp("LAST", (char *)cmd, 4) == 0) return LAST;
+	if (strncmp("NEXT", (char *)cmd, 4) == 0) return NEXT;
 	if (strncmp("DONE", (char *)cmd, 4) == 0) return DONE;
 
 	if (strncmp("STAT", (char *)cmd, 4) == 0) return STAT;
@@ -348,7 +363,7 @@ MessageType get_message_type(uint8_t *cmd) {
 	return NACK;
 }
 
-
+// TODO: Move to shield code and rename
 const char *get_status_type(int type) {
 	switch(type) {
 		case SMM_NO_SHIELD: return "SMM_NO_SHIELD";

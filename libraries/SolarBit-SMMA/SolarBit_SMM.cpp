@@ -31,7 +31,7 @@ uint8_t SMMClass::begin() {
 	return _status;
 }
 
-uint8_t SMMClass::init(uint32_t block_height, block_t *block_header) {
+uint8_t SMMClass::task(uint32_t block_height, block_t *block_header) {
 	memset(&_work, 0, sizeof(smm_work_t));
 	memset(&_work.best_hash, 0xFF, HASH_SIZE);
 	_status = SMM_IDLE;
@@ -57,7 +57,7 @@ uint8_t SMMClass::begin(uint8_t *coinbase, size_t len) {
 	return _status;
 }
 
-uint8_t SMMClass::init(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes) {
+uint8_t SMMClass::task(uint32_t block_height, block_t *block_header, int path_length, uint8_t *path_bytes) {
 	_status = SMM_IDLE;
 	_work.height = block_height;
 	_status = update_coinbase(block_height);
@@ -96,6 +96,7 @@ smm_status_t SMMClass::update_coinbase(uint32_t block_height) {
 }
 
 void SMMClass::set_merkle_path(int path_length, uint8_t *path_bytes) {
+	if (_work.merkle_path_length == 0) return;
 	_work.merkle_path_length = path_length;
 	for (int i = 0, j = 0; i < path_length; i++, j += HASH_SIZE) {
 		memcpy(_work.merkle_path[i], &path_bytes[j + i], HASH_SIZE);
@@ -103,6 +104,7 @@ void SMMClass::set_merkle_path(int path_length, uint8_t *path_bytes) {
 }
 
 void SMMClass::update_merkle_root() {
+	if (_work.merkle_path_length == 0) return;
 	uint8_t hash[HASH_SIZE];
 	uint8_t next[HASH_SIZE * 2];
 	hash256(_work.coinbase, _work.coinbase_length, hash);
@@ -147,6 +149,13 @@ uint8_t SMMClass::mine(int cycles) {
 	return _status;
 }
 
+void SMMClass::result(result_t *result) {
+	result->value.height = _work.height;
+	result->value.bits = get_bits(_work.best_hash);
+	result->value.nonce = _work.best_nonce;
+	result->value.nonce2 = _work.nonce2;
+}
+
 int SMMClass::report(report_t *report) {
 	report->value.mode = _mode;
 	report->value.status = _status;
@@ -172,6 +181,19 @@ smm_status_t SMMClass::set_target(uint32_t bits, uint8_t *target) {
 	return _status;
 }
 
+uint32_t SMMClass::get_bits(uint8_t *hash) {
+	uint8_t bits[4];
+	int i = 0;
+	while (hash[i] == 0) {
+		i++;
+	}
+	bits[0] = hash[i];
+	bits[1] = hash[i + 1];
+	bits[2] = hash[i + 2];
+	bits[3] = i + 3;
+	return (uint32_t)*bits;
+}
+
 void SMMClass::hash256(uint8_t *input, int size, uint8_t *hash) {
 	uint8_t temp[HASH_SIZE];
 	sha256_digest(input, size, temp);
@@ -189,17 +211,14 @@ double SMMClass::hashrate() {
 	return num_hashes / seconds;
 }
 
-int SMMClass::encrypt(uint8_t *bytes, int size, int payload_size, uint32_t *key) {
-	if (payload_size == 0) {
+int SMMClass::encrypt(uint8_t *bytes, int size, uint32_t *key) {
+	if (size == 0) {
 		return 0;
 	}
-	int pkcs7pad = 4 - payload_size % 4;
-	int encrypted_size = payload_size + pkcs7pad;
-	if (encrypted_size > size) {
-		return payload_size;
-	}
+	int pkcs7pad = 4 - size % 4;
+	int encrypted_size = size + pkcs7pad;
 	int n = encrypted_size / 4;
-	memset(&bytes[payload_size], pkcs7pad, pkcs7pad);
+	memset(&bytes[size], pkcs7pad, pkcs7pad);
 	xxtea_encode((uint32_t *) bytes, n, key);
 	return encrypted_size;
 }
